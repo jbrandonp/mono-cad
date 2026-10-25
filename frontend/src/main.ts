@@ -37,6 +37,9 @@ class MonoApp {
   private statVolume: HTMLElement;
   private statTriangles: HTMLElement;
   private statVertices: HTMLElement;
+  private isTextileRunning: boolean = false;
+  private textileAnimationId: number | null = null;
+  private statTextileStatus: HTMLElement | null = null;
 
   constructor() {
     const canvas = document.getElementById('cad-canvas') as HTMLCanvasElement;
@@ -48,6 +51,7 @@ class MonoApp {
     this.statVolume = document.getElementById('stat-volume')!;
     this.statTriangles = document.getElementById('stat-triangles')!;
     this.statVertices = document.getElementById('stat-vertices')!;
+    this.statTextileStatus = document.getElementById('stat-textile-status');
 
     this.setupUIHandlers();
     this.connectWebSocket();
@@ -88,6 +92,111 @@ class MonoApp {
         });
       });
     }
+
+    // Contrôles Atelier Textile GPU XPBD
+    const btnTextileToggle = document.getElementById('btn-textile-toggle');
+    if (btnTextileToggle) {
+      btnTextileToggle.addEventListener('click', () => {
+        if (!this.isTextileRunning) {
+          this.isTextileRunning = true;
+          btnTextileToggle.textContent = '⏸ Pause Simulation Textile';
+          btnTextileToggle.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
+          if (this.statTextileStatus) {
+            this.statTextileStatus.textContent = 'Actif (60 FPS)';
+            this.statTextileStatus.className = 'stat-value highlight';
+          }
+          // Initialisation côté serveur si nécessaire
+          this.sendMessage({
+            type: 'init_textile',
+            entity_id: 'textile_001',
+            res_x: 32,
+            res_y: 32,
+            spacing: 0.03,
+            center_y: 1.2,
+            pin: 'top',
+          });
+          this.runTextileLoop();
+        } else {
+          this.isTextileRunning = false;
+          if (this.textileAnimationId !== null) {
+            cancelAnimationFrame(this.textileAnimationId);
+            this.textileAnimationId = null;
+          }
+          btnTextileToggle.textContent = '▶ Reprendre Simulation Textile';
+          btnTextileToggle.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+          if (this.statTextileStatus) {
+            this.statTextileStatus.textContent = 'En pause';
+            this.statTextileStatus.className = 'stat-value';
+          }
+        }
+      });
+    }
+
+    const btnTextileWind = document.getElementById('btn-textile-wind');
+    if (btnTextileWind) {
+      btnTextileWind.addEventListener('click', () => {
+        const vz = 2.0 + Math.random() * 3.5;
+        const vx = (Math.random() - 0.5) * 3.0;
+        this.sendMessage({
+          type: 'set_textile_wind',
+          entity_id: 'textile_001',
+          vx,
+          vy: 0.5,
+          vz,
+        });
+      });
+    }
+
+    const btnTextileSphere = document.getElementById('btn-textile-sphere');
+    if (btnTextileSphere) {
+      btnTextileSphere.addEventListener('click', () => {
+        this.sendMessage({
+          type: 'add_textile_sphere',
+          entity_id: 'textile_001',
+          cx: 0.0,
+          cy: 0.45,
+          cz: 0.0,
+          radius: 0.22,
+        });
+      });
+    }
+
+    const btnTextileDrapeBox = document.getElementById('btn-textile-drape-box');
+    if (btnTextileDrapeBox) {
+      btnTextileDrapeBox.addEventListener('click', () => {
+        this.sendMessage({
+          type: 'drape_on_brep_sdf',
+          entity_id: 'textile_001',
+          solid_entity_id: 'part_001',
+        });
+      });
+    }
+
+    const btnTextileUnpin = document.getElementById('btn-textile-unpin');
+    if (btnTextileUnpin) {
+      btnTextileUnpin.addEventListener('click', () => {
+        this.sendMessage({
+          type: 'unpin_textile',
+          entity_id: 'textile_001',
+        });
+      });
+    }
+  }
+
+  private runTextileLoop(): void {
+    if (!this.isTextileRunning) return;
+
+    this.sendMessage({
+      type: 'step_textile',
+      entity_id: 'textile_001',
+      n_frames: 1,
+    });
+
+    // Fréquence d'actualisation synchronisée avec l'écran (60 FPS)
+    this.textileAnimationId = requestAnimationFrame(() => {
+      // Temporisation légère pour ne pas saturer le buffer WebSocket si forte charge
+      setTimeout(() => this.runTextileLoop(), 16);
+    });
   }
 
   private connectWebSocket(): void {

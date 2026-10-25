@@ -52,6 +52,36 @@
           </div>
         </section>
 
+        <!-- Section Atelier Textile GPU XPBD (Macklin 2016) -->
+        <section class="panel-section">
+          <h2 class="section-title">Textile GPU XPBD (60 FPS)</h2>
+          <div class="textile-controls" style="display: flex; flex-direction: column; gap: 8px;">
+            <button id="btn-textile-toggle" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669);">
+              🧵 Lancer Textile GPU (60 FPS)
+            </button>
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-textile-wind" class="btn btn-secondary btn-sm" style="flex: 1;">
+                💨 Vent (3.5 m/s)
+              </button>
+              <button id="btn-textile-sphere" class="btn btn-secondary btn-sm" style="flex: 1;">
+                🔮 Obstacle Sphère
+              </button>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-textile-drape-box" class="btn btn-secondary btn-sm" style="flex: 1;">
+                📦 Draper sur B-Rep (SDF)
+              </button>
+              <button id="btn-textile-unpin" class="btn btn-secondary btn-sm" style="flex: 1;">
+                📌 Lâcher Pinces
+              </button>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Statut Physique :</span>
+              <span id="stat-textile-status" class="stat-value highlight">En attente</span>
+            </div>
+          </div>
+        </section>
+
         <!-- Section Actions Rapides -->
         <section class="panel-section actions-section">
           <button id="btn-fea-simulate" class="btn btn-primary" style="margin-bottom: 8px;">

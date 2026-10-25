@@ -815,5 +815,92 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             "entity_id": eid,
                         })
 
+            elif msg_type == "init_textile":
+                eid = str(msg.get("entity_id", "textile_001"))
+                rx = int(msg.get("res_x", 32))
+                ry = int(msg.get("res_y", 32))
+                sp = float(msg.get("spacing", 0.03))
+                provider = TextileXpbdProvider(res_x=rx, res_y=ry, spacing=sp)
+                provider.reset_horizontal(center_y=float(msg.get("center_y", 1.0)))
+                if msg.get("pin", "top") == "top":
+                    provider.pin_top_edge()
+                elif msg.get("pin") == "corners":
+                    provider.pin_corners()
+                else:
+                    provider.unpin_all()
+
+                state.doc.entities[eid] = EntityRecord(
+                    entity_id=eid,
+                    provider_name="textile_xpbd",
+                    scale_domain="meter",
+                    provider=provider,
+                    tags=["textile", "xpbd", "gpu"],
+                )
+                payloads = state.doc.collect_dirty_binary_payloads()
+                for payload in payloads:
+                    await state.ipc.broadcast_binary_mesh(payload)
+                await state.ipc.send_json(websocket, {
+                    "type": "textile_initialized",
+                    "entity_id": eid,
+                    "particles": provider.engine.n_particles,
+                })
+
+            elif msg_type == "set_textile_wind":
+                eid = str(msg.get("entity_id", "textile_001"))
+                if eid in state.doc.entities:
+                    rec = state.doc.entities[eid]
+                    if isinstance(rec.provider, TextileXpbdProvider):
+                        rec.provider.set_wind(
+                            float(msg.get("vx", 0.0)),
+                            float(msg.get("vy", 0.0)),
+                            float(msg.get("vz", 0.0)),
+                        )
+                        await state.ipc.send_json(websocket, {
+                            "type": "textile_wind_updated",
+                            "entity_id": eid,
+                        })
+
+            elif msg_type == "unpin_textile":
+                eid = str(msg.get("entity_id", "textile_001"))
+                if eid in state.doc.entities:
+                    rec = state.doc.entities[eid]
+                    if isinstance(rec.provider, TextileXpbdProvider):
+                        rec.provider.unpin_all()
+                        await state.ipc.send_json(websocket, {
+                            "type": "textile_unpinned",
+                            "entity_id": eid,
+                        })
+
+            elif msg_type == "add_textile_sphere":
+                eid = str(msg.get("entity_id", "textile_001"))
+                if eid in state.doc.entities:
+                    rec = state.doc.entities[eid]
+                    if isinstance(rec.provider, TextileXpbdProvider):
+                        cx = float(msg.get("cx", 0.0))
+                        cy = float(msg.get("cy", 0.45))
+                        cz = float(msg.get("cz", 0.0))
+                        r = float(msg.get("radius", 0.22))
+                        rec.provider.add_sphere_obstacle((cx, cy, cz), r)
+                        await state.ipc.send_json(websocket, {
+                            "type": "textile_sphere_added",
+                            "entity_id": eid,
+                        })
+
+            elif msg_type == "drape_on_brep_sdf":
+                eid = str(msg.get("entity_id", "textile_001"))
+                solid_eid = str(msg.get("solid_entity_id", "part_001"))
+                if eid in state.doc.entities and solid_eid in state.doc.entities:
+                    rec_cloth = state.doc.entities[eid]
+                    rec_solid = state.doc.entities[solid_eid]
+                    if isinstance(rec_cloth.provider, TextileXpbdProvider):
+                        part = getattr(rec_solid.provider, "part", None)
+                        if part is not None:
+                            rec_cloth.provider.load_sdf_from_brep(part, resolution=16)
+                            await state.ipc.send_json(websocket, {
+                                "type": "textile_sdf_loaded",
+                                "entity_id": eid,
+                                "solid_entity_id": solid_eid,
+                            })
+
     except WebSocketDisconnect:
         state.ipc.disconnect(websocket)
