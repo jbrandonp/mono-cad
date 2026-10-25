@@ -24,6 +24,8 @@ import numpy as np
 import numpy.typing as npt
 import build123d as bd
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Defeaturing
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Torus
 
 from mono.core.geometry_provider import (
     GeometryProvider,
@@ -31,6 +33,18 @@ from mono.core.geometry_provider import (
     ValidationReport,
 )
 from mono.execution.workers import run_ccx_job, is_ccx_available
+
+
+@dataclass(frozen=True)
+class DefeaturingReport:
+    """Rapport d'audit de défeaturisation géométrique avant maillage."""
+
+    initial_face_count: int
+    final_face_count: int
+    fillets_removed_count: int
+    small_faces_removed_count: int
+    is_success: bool
+    removed_face_areas: tuple[float, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -53,6 +67,7 @@ class FEABoundaryCondition:
     applied_force_n: tuple[float, float, float] = (0.0, 0.0, -2500.0)  # Vecteur force global (Fx, Fy, Fz) en N
     fixed_face_indices: tuple[int, ...] = field(default_factory=tuple)  # Indices explicites si spécifiés
     load_face_indices: tuple[int, ...] = field(default_factory=tuple)
+    semantic_groups: dict[str, str | tuple[int, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -131,39 +146,85 @@ class FeaGmshProvider(GeometryProvider):
 
     def apply_defeaturing(
         self,
+        max_fillet_radius_mm: float = 2.0,
         min_feature_size_mm: float | None = None,
         auto_ratio: float = 0.05,
-    ) -> None:
+    ) -> DefeaturingReport:
         """Supprime les micro-congés et micro-faces susceptibles de dégrader le maillage.
 
         Utilise l'algorithme exact OpenCASCADE BRepAlgoAPI_Defeaturing.
-        Règle d'ingénierie automatique : élimine toute face dont l'aire est inférieure à
-        auto_ratio * aire_moyenne (0.05 par défaut) ou inférieure à min_feature_size_mm.
+        Règles d'ingénierie automatique :
+        1. Détection géométrique des faces cylindriques et toroïdales dont le rayon R <= max_fillet_radius_mm.
+        2. Élimination des micro-faces dont l'aire est inférieure à auto_ratio * aire_moyenne ou min_feature_size_mm.
 
         Args:
-            min_feature_size_mm: Rayon ou taille absolue en-deçà duquel une face est éliminée.
+            max_fillet_radius_mm: Rayon maximal des congés à éliminer (défaut 2.0 mm).
+            min_feature_size_mm: Taille absolue minimale d'entité en-dessous de laquelle la face est supprimée.
             auto_ratio: Ratio par rapport à la surface moyenne des faces (défaut 0.05 = 5%).
+
+        Returns:
+            DefeaturingReport: Rapport complet détaillant les faces supprimées et le succès de l'opération.
         """
         if self._part is None:
-            return
+            return DefeaturingReport(
+                initial_face_count=0,
+                final_face_count=0,
+                fillets_removed_count=0,
+                small_faces_removed_count=0,
+                is_success=False,
+            )
 
         all_faces = list(self._part.faces())
         if not all_faces:
-            return
+            return DefeaturingReport(
+                initial_face_count=0,
+                final_face_count=0,
+                fillets_removed_count=0,
+                small_faces_removed_count=0,
+                is_success=False,
+            )
 
+        initial_count = len(all_faces)
         mean_area = sum(f.area for f in all_faces) / len(all_faces)
         threshold_area = mean_area * auto_ratio
         if min_feature_size_mm is not None:
             threshold_area = max(threshold_area, min_feature_size_mm * min_feature_size_mm * 0.5)
 
-        faces_to_remove: list[bd.Face] = []
+        fillet_faces: list[bd.Face] = []
+        small_faces: list[bd.Face] = []
+
         for face in all_faces:
-            if face.area < threshold_area:
-                faces_to_remove.append(face)
+            is_fillet = False
+            try:
+                ad = BRepAdaptor_Surface(face.wrapped)
+                st = ad.GetType()
+                if st == GeomAbs_Cylinder:
+                    cyl = ad.Cylinder()
+                    if cyl.Radius() <= max_fillet_radius_mm:
+                        fillet_faces.append(face)
+                        is_fillet = True
+                elif st == GeomAbs_Torus:
+                    tor = ad.Torus()
+                    if tor.MinorRadius() <= max_fillet_radius_mm:
+                        fillet_faces.append(face)
+                        is_fillet = True
+            except Exception:
+                pass
 
+            if not is_fillet and face.area < threshold_area:
+                small_faces.append(face)
+
+        faces_to_remove = fillet_faces + small_faces
         if not faces_to_remove or len(faces_to_remove) >= len(all_faces):
-            return
+            return DefeaturingReport(
+                initial_face_count=initial_count,
+                final_face_count=initial_count,
+                fillets_removed_count=0,
+                small_faces_removed_count=0,
+                is_success=False,
+            )
 
+        removed_areas = tuple(float(f.area) for f in faces_to_remove)
         defeature = BRepAlgoAPI_Defeaturing()
         defeature.SetShape(self._part.wrapped)
         for f in faces_to_remove:
@@ -178,6 +239,24 @@ class FeaGmshProvider(GeometryProvider):
                 self._part = bd.Solid(new_shape)
             else:
                 self._part = bd.Compound(new_shape)
+
+            final_count = len(list(self._part.faces()))
+            return DefeaturingReport(
+                initial_face_count=initial_count,
+                final_face_count=final_count,
+                fillets_removed_count=len(fillet_faces),
+                small_faces_removed_count=len(small_faces),
+                is_success=True,
+                removed_face_areas=removed_areas,
+            )
+
+        return DefeaturingReport(
+            initial_face_count=initial_count,
+            final_face_count=initial_count,
+            fillets_removed_count=0,
+            small_faces_removed_count=0,
+            is_success=False,
+        )
 
     def solve(self, working_dir: Path | None = None) -> FEAResult:
         """Exécute la chaîne FEA complète : maillage Gmsh C3D10, calcul ccx et dépouillement.
@@ -244,6 +323,18 @@ class FeaGmshProvider(GeometryProvider):
 
                 g_load = gmsh.model.addPhysicalGroup(2, load_faces)
                 gmsh.model.setPhysicalName(2, g_load, "LOAD_NODES")
+
+                # Groupes physiques sémantiques personnalisés
+                bboxes = {s[1]: gmsh.model.getBoundingBox(2, s[1]) for s in surfaces}
+                for sem_name, sem_pred in self._boundary.semantic_groups.items():
+                    sem_tags: list[int] = []
+                    if isinstance(sem_pred, (list, tuple)):
+                        sem_tags = [int(t) for t in sem_pred]
+                    elif isinstance(sem_pred, str):
+                        sem_tags = self._match_faces_by_predicate(bboxes, sem_pred)
+                    if sem_tags:
+                        g_sem = gmsh.model.addPhysicalGroup(2, sem_tags)
+                        gmsh.model.setPhysicalName(2, g_sem, sem_name)
 
                 # Paramètres de maillage C3D10 (Second Ordre)
                 gmsh.option.setNumber("Mesh.ElementOrder", 2)  # Ordre 2 = Tétraèdres à 10 nœuds
@@ -350,6 +441,33 @@ class FeaGmshProvider(GeometryProvider):
             self._cached_result = fea_result
             return fea_result
 
+    def _match_faces_by_predicate(
+        self, bboxes: dict[int, tuple[float, ...]], predicate: str
+    ) -> list[int]:
+        """Filtre les faces selon un prédicat géométrique spatial."""
+        pred = predicate.lower()
+        if not bboxes:
+            return []
+        if pred == "min_z":
+            min_val = min(b[2] for b in bboxes.values())
+            return [tag for tag, b in bboxes.items() if b[5] <= min_val + 1e-3]
+        elif pred == "max_z":
+            max_val = max(b[5] for b in bboxes.values())
+            return [tag for tag, b in bboxes.items() if b[2] >= max_val - 1e-3]
+        elif pred == "min_x":
+            min_val = min(b[0] for b in bboxes.values())
+            return [tag for tag, b in bboxes.items() if b[3] <= min_val + 1e-3]
+        elif pred == "max_x":
+            max_val = max(b[3] for b in bboxes.values())
+            return [tag for tag, b in bboxes.items() if b[0] >= max_val - 1e-3]
+        elif pred == "min_y":
+            min_val = min(b[1] for b in bboxes.values())
+            return [tag for tag, b in bboxes.items() if b[4] <= min_val + 1e-3]
+        elif pred == "max_y":
+            max_val = max(b[4] for b in bboxes.values())
+            return [tag for tag, b in bboxes.items() if b[1] >= max_val - 1e-3]
+        return []
+
     def _select_boundary_surfaces(
         self, surfaces: list[tuple[int, int]]
     ) -> tuple[list[int], list[int]]:
@@ -360,50 +478,8 @@ class FeaGmshProvider(GeometryProvider):
         # Calcul des coordonnées extrêmes sur l'ensemble des faces
         bboxes = {s[1]: gmsh.model.getBoundingBox(2, s[1]) for s in surfaces}
 
-        fixed_faces: list[int] = []
-        load_faces: list[int] = []
-
-        # 1. Sélection face encastrée
-        p_fix = self._boundary.fixed_predicate.lower()
-        if p_fix == "min_z":
-            min_val = min(b[2] for b in bboxes.values())
-            fixed_faces = [tag for tag, b in bboxes.items() if b[5] <= min_val + 1e-3]
-        elif p_fix == "max_z":
-            max_val = max(b[5] for b in bboxes.values())
-            fixed_faces = [tag for tag, b in bboxes.items() if b[2] >= max_val - 1e-3]
-        elif p_fix == "min_x":
-            min_val = min(b[0] for b in bboxes.values())
-            fixed_faces = [tag for tag, b in bboxes.items() if b[3] <= min_val + 1e-3]
-        elif p_fix == "max_x":
-            max_val = max(b[3] for b in bboxes.values())
-            fixed_faces = [tag for tag, b in bboxes.items() if b[0] >= max_val - 1e-3]
-        elif p_fix == "min_y":
-            min_val = min(b[1] for b in bboxes.values())
-            fixed_faces = [tag for tag, b in bboxes.items() if b[4] <= min_val + 1e-3]
-        elif p_fix == "max_y":
-            max_val = max(b[4] for b in bboxes.values())
-            fixed_faces = [tag for tag, b in bboxes.items() if b[1] >= max_val - 1e-3]
-
-        # 2. Sélection face de charge
-        p_load = self._boundary.load_predicate.lower()
-        if p_load == "max_z":
-            max_val = max(b[5] for b in bboxes.values())
-            load_faces = [tag for tag, b in bboxes.items() if b[2] >= max_val - 1e-3]
-        elif p_load == "min_z":
-            min_val = min(b[2] for b in bboxes.values())
-            load_faces = [tag for tag, b in bboxes.items() if b[5] <= min_val + 1e-3]
-        elif p_load == "max_x":
-            max_val = max(b[3] for b in bboxes.values())
-            load_faces = [tag for tag, b in bboxes.items() if b[0] >= max_val - 1e-3]
-        elif p_load == "min_x":
-            min_val = min(b[0] for b in bboxes.values())
-            load_faces = [tag for tag, b in bboxes.items() if b[3] <= min_val + 1e-3]
-        elif p_load == "max_y":
-            max_val = max(b[4] for b in bboxes.values())
-            load_faces = [tag for tag, b in bboxes.items() if b[1] >= max_val - 1e-3]
-        elif p_load == "min_y":
-            min_val = min(b[1] for b in bboxes.values())
-            load_faces = [tag for tag, b in bboxes.items() if b[4] <= min_val + 1e-3]
+        fixed_faces = self._match_faces_by_predicate(bboxes, self._boundary.fixed_predicate)
+        load_faces = self._match_faces_by_predicate(bboxes, self._boundary.load_predicate)
 
         # S'assurer qu'au moins une face est sélectionnée
         if not fixed_faces and surfaces:

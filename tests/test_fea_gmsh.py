@@ -117,14 +117,63 @@ def test_fea_overload_plastic_warning() -> None:
 
 
 def test_fea_defeaturing_clean() -> None:
-    """Vérifie l'application de l'algorithme OpenCASCADE BRepAlgoAPI_Defeaturing."""
-    # Création d'une boîte avec une petite protrusion
-    base = bd.Box(20.0, 20.0, 20.0)
-    provider = FeaGmshProvider(entity_id="box_feat", part=base, auto_defeaturing=True)
+    """Vérifie l'application de l'algorithme OpenCASCADE BRepAlgoAPI_Defeaturing sur des micro-congés réels."""
+    from mono.providers.fea_gmsh import DefeaturingReport
 
-    # Appel du defeaturing avec règle automatique surface < 0.05 * surface_moyenne
-    provider.apply_defeaturing(auto_ratio=0.05)
-    assert provider._part is not None
+    # 1. Création d'une boîte avec 4 micro-congés de rayon 1.0 mm
+    base = bd.Box(30.0, 20.0, 15.0)
+    filleted = bd.fillet(base.edges().filter_by(bd.Axis.Z), radius=1.0)
+    initial_faces = len(list(filleted.faces()))
+    assert initial_faces == 10  # 6 faces principales + 4 congés cylindriques
+
+    provider = FeaGmshProvider(
+        entity_id="box_filleted_fea",
+        part=filleted,
+        element_size_max=5.0,
+        auto_defeaturing=True,
+    )
+
+    # 2. Appel du defeaturing avec suppression des congés R <= 1.5 mm
+    report = provider.apply_defeaturing(max_fillet_radius_mm=1.5)
+    assert isinstance(report, DefeaturingReport)
+    assert report.is_success is True
+    assert report.fillets_removed_count == 4
+    assert report.final_face_count == 6  # Restauration exacte des 6 faces planes sans congés
+
+    # 3. Résolution FEA sous CalculiX sur la pièce défeaturée
+    res = provider.solve()
+    assert res.num_nodes > 50
+    assert res.num_elements > 30
+    assert res.max_von_mises_mpa > 0.0
+    assert res.is_structurally_safe is True
+
+
+def test_fea_semantic_groups_and_deck_assembly() -> None:
+    """Vérifie la définition de groupes physiques sémantiques personnalisés et l'assemblage du deck CalculiX."""
+    box = bd.Box(25.0, 25.0, 25.0)
+    bc = FEABoundaryCondition(
+        fixed_predicate="min_z",
+        load_predicate="max_z",
+        applied_force_n=(0.0, 0.0, -3000.0),
+        semantic_groups={
+            "BASE_SUPPORT": "min_z",
+            "TOP_LOAD_PAD": "max_z",
+            "SIDE_PANEL_X": "max_x",
+        },
+    )
+
+    provider = FeaGmshProvider(
+        entity_id="box_semantic_fea",
+        part=box,
+        boundary=bc,
+        element_size_max=6.0,
+    )
+
+    res = provider.solve()
+    assert res.num_nodes > 40
+    assert res.max_von_mises_mpa > 0.0
+    assert res.max_displacement_mm > 0.0
+    assert res.safety_factor > 0.0
 
 
 def test_fea_rest_api_and_websocket() -> None:
