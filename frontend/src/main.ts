@@ -72,6 +72,14 @@ class MonoApp {
 
     this.setupUIHandlers();
     this.connectWebSocket();
+
+    // Détection de l'environnement Tauri Desktop natif
+    if (typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== 'undefined') {
+      const desktopBadge = document.getElementById('desktop-native-badge');
+      if (desktopBadge) {
+        desktopBadge.style.display = 'inline-block';
+      }
+    }
   }
 
   private setupUIHandlers(): void {

@@ -344,15 +344,41 @@ uv sync
 
 # 3. Installer les dépendances du frontend TypeScript
 cd frontend
-pnpm install # ou npm install
-pnpm run build
+bun install # ou npm install
+bun run build
 cd ..
 
 # 4. Lancer le serveur d'ingénierie Mono
 uv run python src/mono/main.py
 ```
 
-L'application est immédiatement accessible dans votre navigateur à l'adresse : **`http://127.0.0.1:8000`** (ou en mode dev via `pnpm --prefix frontend run dev` sur `http://localhost:5173`).
+L'application est immédiatement accessible dans votre navigateur à l'adresse : **`http://127.0.0.1:8000`** (ou en mode dev via `bun --cwd frontend dev` sur `http://localhost:5173`).
+
+### 📦 Application Desktop Autonome (Tauri 2.x & Installateurs Windows)
+
+Mono CAD Studio dispose d'une application de bureau native Windows 11 ultra-légère développée avec **Tauri 2.x** et **Rust** :
+
+- **Exécutable autonome :** `src-tauri/target/release/mono-cad.exe` (~10,5 Mo).
+- **Installateur NSIS (`.exe`) :** `src-tauri/target/release/bundle/nsis/mono-cad_0.1.0_x64-setup.exe` (~4,0 Mo).
+- **Package Entreprise MSI (`.msi`) :** `src-tauri/target/release/bundle/msi/mono-cad_0.1.0_x64_en-US.msi` (~5,0 Mo).
+
+#### Cycle de Vie & Tâche de Fond Backend
+L'application Tauri orchestre automatiquement le démarrage du backend Python local (`mono.exe` ou FastAPI `mono.ipc.server:app` sur `127.0.0.1:8000`) en tâche de fond discrète (drapeau `CREATE_NO_WINDOW`, sans invite de commande CMD parasite). À la fermeture de la fenêtre de l'application, Tauri assure l'extinction propre du processus backend afin de ne laisser aucun processus orphelin en mémoire.
+
+#### Commandes de Compilation Desktop
+```bash
+# Compiler l'exécutable natif release sans installateur
+cargo tauri build --no-bundle
+
+# Générer l'installateur Windows NSIS (.exe)
+cargo tauri build -b nsis
+
+# Générer le package Windows Installer (.msi)
+cargo tauri build -b msi
+
+# Générer l'ensemble de la suite de distribution
+cargo tauri build
+```
 
 ---
 

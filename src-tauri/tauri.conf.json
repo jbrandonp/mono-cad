@@ -6,12 +6,13 @@
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "bun run dev --cwd frontend",
-    "beforeBuildCommand": "bun run build --cwd frontend"
+    "beforeDevCommand": "bun --cwd ../frontend dev",
+    "beforeBuildCommand": "bun --cwd ../frontend build"
   },
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Mono — Unified Multidisciplinary CAD Engineering",
         "width": 1440,
         "height": 900,
@@ -32,9 +33,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "android": {
-      "debugApplicationIdSuffix": ".debug"
-    }
+    ]
   }
 }
