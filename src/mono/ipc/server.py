@@ -4,9 +4,10 @@ import base64
 import hashlib
 import json
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
+import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from mono.core.archive_mono import MonoArchive, MonoArchiveError
 from mono.core.document import MonoDocument, EntityRecord
@@ -96,6 +97,27 @@ class TextileStepRequest(BaseModel):
     wind_x: float = 0.0
     wind_y: float = 0.0
     wind_z: float = 0.0
+
+
+class TextileObstacleRequest(BaseModel):
+    """Schéma de requête pour l'ajout d'obstacles physiques."""
+
+    entity_id: str = "textile_001"
+    obstacle_type: Literal["sphere", "box", "cylinder"] = "sphere"
+    center: list[float] = Field(default_factory=lambda: [0.0, 0.45, 0.0])
+    radius: float = 0.20
+    min_corner: list[float] = Field(default_factory=lambda: [-0.1, 0.1, -0.1])
+    max_corner: list[float] = Field(default_factory=lambda: [0.1, 0.3, 0.1])
+    height: float = 0.5
+
+
+class TextileDrapeRequest(BaseModel):
+    """Schéma de requête pour le drapé automatique au-dessus d'un solide mécanique B-Rep."""
+
+    cloth_entity_id: str = "textile_001"
+    solid_entity_id: str = "part_001"
+    center_y: float = 1.0
+    resolution: int = 16
 
 
 class BiomoleculeLoadRequest(BaseModel):
@@ -403,6 +425,97 @@ async def step_textile(req: TextileStepRequest) -> dict[str, object]:
         "status": "stepped",
         "entity_id": req.entity_id,
         "n_frames": req.n_frames,
+    }
+
+
+@app.post("/api/textile/obstacle")
+async def add_textile_obstacle(req: TextileObstacleRequest) -> dict[str, object]:
+    """Ajoute un obstacle physique (sphère, boîte AABB ou cylindre) à la simulation textile."""
+    if req.entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité textile non trouvée dans la scène.")
+
+    rec = state.doc.entities[req.entity_id]
+    if not isinstance(rec.provider, TextileXpbdProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas un textile XPBD.")
+
+    if req.obstacle_type == "sphere":
+        cx, cy, cz = req.center[0], req.center[1], req.center[2]
+        rec.provider.add_sphere_obstacle((cx, cy, cz), req.radius)
+    elif req.obstacle_type == "box":
+        min_c = (req.min_corner[0], req.min_corner[1], req.min_corner[2])
+        max_c = (req.max_corner[0], req.max_corner[1], req.max_corner[2])
+        rec.provider.add_box_obstacle(min_c, max_c)
+    elif req.obstacle_type == "cylinder":
+        cx, cy, cz = req.center[0], req.center[1], req.center[2]
+        rec.provider.add_cylinder_obstacle((cx, cy, cz), req.radius, req.height)
+
+    return {
+        "status": "obstacle_added",
+        "entity_id": req.entity_id,
+        "obstacle_type": req.obstacle_type,
+    }
+
+
+@app.post("/api/textile/drape")
+async def drape_textile_on_solid(req: TextileDrapeRequest) -> dict[str, object]:
+    """Positionne et prépare le drapé automatique du textile au-dessus d'un solide mécanique B-Rep."""
+    if req.solid_entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Solide B-Rep cible introuvable dans la scène.")
+
+    rec_solid = state.doc.entities[req.solid_entity_id]
+    part = getattr(rec_solid.provider, "part", None)
+    if part is None:
+        raise HTTPException(status_code=400, detail="L'entité spécifiée ne contient pas de solide B-Rep.")
+
+    # Instanciation ou récupération du textile
+    if req.cloth_entity_id in state.doc.entities and isinstance(state.doc.entities[req.cloth_entity_id].provider, TextileXpbdProvider):
+        provider = state.doc.entities[req.cloth_entity_id].provider
+    else:
+        provider = TextileXpbdProvider(res_x=32, res_y=32, spacing=0.03)
+        state.doc.entities[req.cloth_entity_id] = EntityRecord(
+            entity_id=req.cloth_entity_id,
+            provider_name="textile_xpbd",
+            scale_domain="meter",
+            provider=provider,
+            tags=["textile", "xpbd", "gpu", "drape"],
+        )
+
+    provider.drape_on_solid(part, center_y=req.center_y, resolution=req.resolution)
+    return {
+        "status": "drape_prepared",
+        "cloth_entity_id": req.cloth_entity_id,
+        "solid_entity_id": req.solid_entity_id,
+        "center_y": req.center_y,
+        "resolution": req.resolution,
+    }
+
+
+@app.get("/api/textile/metrics")
+async def get_textile_metrics(entity_id: str = "textile_001") -> dict[str, object]:
+    """Retourne les métriques physiques temps réel du textile (particules, surface, déformation max)."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité textile non trouvée dans la scène.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, TextileXpbdProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas un textile XPBD.")
+
+    report = rec.provider.introspect()
+    vels = rec.provider.get_velocities()
+    speeds = np.linalg.norm(vels, axis=1)
+    strains = rec.provider.get_strains()
+
+    return {
+        "entity_id": entity_id,
+        "particles": report.topology_counts.get("particles", 0),
+        "triangles": report.topology_counts.get("triangles", 0),
+        "surface_area_m2": report.surface_area_m2,
+        "center_of_mass": list(report.center_of_mass),
+        "bbox_min": list(report.bbox_min),
+        "bbox_max": list(report.bbox_max),
+        "mean_speed_mps": float(np.mean(speeds)),
+        "max_strain": float(np.max(strains)) if len(strains) > 0 else 0.0,
+        "is_valid": report.is_valid_l0,
     }
 
 
