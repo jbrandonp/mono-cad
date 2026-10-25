@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
 from pydantic import BaseModel
 
 from mono.core.document import MonoDocument
@@ -11,6 +11,7 @@ from mono.ipc.websocket_manager import WebSocketIPCManager
 from mono.execution.ecip_executor import execute_ecip_cad_block, ECIPExecutionError
 from mono.providers.brep_build123d import BRepBuild123dProvider
 from mono.security.ast_validator import SecurityViolationError
+from mono.vision.quad_view_generator import QuadViewGenerator
 
 
 class ECIPExecuteRequest(BaseModel):
@@ -65,6 +66,27 @@ def health_check() -> dict[str, str]:
 def get_scene_summary() -> dict[str, object]:
     """Retourne l'arbre sémantique et la liste des entités du document actuel."""
     return state.doc.to_semantic_summary()
+
+
+@app.get("/api/scene/quad-view")
+def get_scene_quad_view() -> Response:
+    """Génère la planche composite 4 vues orthographiques/isométrique (1024x1024) pour le juge VLM."""
+    if not state.doc.entities:
+        raise HTTPException(status_code=404, detail="Aucune entité géométrique dans la scène.")
+
+    # Sélection de la première entité B-Rep disponible
+    target_provider = None
+    for rec in state.doc.entities.values():
+        if isinstance(rec.provider, BRepBuild123dProvider):
+            target_provider = rec.provider
+            break
+
+    if target_provider is None:
+        raise HTTPException(status_code=400, detail="Aucune entité B-Rep éligible pour l'inspection 4 vues.")
+
+    generator = QuadViewGenerator(size=1024)
+    result = generator.generate(target_provider.part, title="MONO CADEngBench Inspection")
+    return Response(content=result.image_bytes, media_type="image/png")
 
 
 @app.post("/api/ecip/execute")

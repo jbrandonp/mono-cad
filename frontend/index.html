@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mono — Unified Engineering Platform</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Panneau latéral gauche : Contrôle, Paramètres et Chat IA -->
+      <aside id="sidebar">
+        <header class="sidebar-header">
+          <div class="logo">
+            <span class="logo-badge">MONO</span>
+            <span class="logo-title">CAD Studio v2.0</span>
+          </div>
+          <div id="connection-status" class="status-indicator disconnected">
+            <span class="status-dot"></span>
+            <span class="status-text">Hors ligne</span>
+          </div>
+        </header>
+
+        <!-- Section Curseurs Paramétriques Réactifs -->
+        <section class="panel-section">
+          <h2 class="section-title">Paramètres Dynamiques</h2>
+          <div id="parameters-container" class="parameters-list">
+            <div class="empty-state">En attente de paramètres de pièce...</div>
+          </div>
+        </section>
+
+        <!-- Section Métadonnées et Audit Déterministe L0/L1 -->
+        <section class="panel-section">
+          <h2 class="section-title">Audit Géométrique (L0 / L1)</h2>
+          <div id="audit-stats" class="audit-card">
+            <div class="stat-row">
+              <span class="stat-label">Statut B-Rep :</span>
+              <span id="stat-manifold" class="stat-value highlight">--</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Volume :</span>
+              <span id="stat-volume" class="stat-value">--</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Triangles :</span>
+              <span id="stat-triangles" class="stat-value">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Sommets :</span>
+              <span id="stat-vertices" class="stat-value">0</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section Actions Rapides -->
+        <section class="panel-section actions-section">
+          <button id="btn-quad-view" class="btn btn-secondary">
+            📷 Planche 4 Vues (1024x1024)
+          </button>
+          <div class="history-controls">
+            <button id="btn-undo" class="btn btn-sm">↺ Annuler</button>
+            <button id="btn-redo" class="btn btn-sm">↻ Rétablir</button>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Viewport 3D Principal Three.js -->
+      <main id="viewport-container">
+        <canvas id="cad-canvas"></canvas>
+        <div id="viewport-overlay">
+          <div class="viewport-hud">
+            <span id="hud-camera-mode">PERSPECTIVE / RTC FLOAT64</span>
+            <span id="hud-fps">60 FPS</span>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Script principal TypeScript -->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

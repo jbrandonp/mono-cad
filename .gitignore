@@ -10,3 +10,9 @@ build/
 *.egg-info/
 *.step
 *.stp
+node_modules/
+target/
+src-tauri/target/
+frontend/dist/
+frontend/node_modules/
+.agents/
