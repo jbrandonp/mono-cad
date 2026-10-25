@@ -950,6 +950,7 @@ def generate_techdraw_endpoint(req: TechDrawGenerateRequest) -> dict[str, object
         "gdt_count": report.gdt_count,
         "svg_url": f"/api/techdraw/svg?entity_id={td_id}",
         "dxf_url": f"/api/techdraw/dxf?entity_id={td_id}",
+        "pdf_url": f"/api/techdraw/pdf?entity_id={td_id}",
     }
 
 
@@ -986,6 +987,24 @@ def get_techdraw_dxf(entity_id: str = "part_001_techdraw") -> Response:
         content=dxf_content,
         media_type="application/dxf",
         headers={"Content-Disposition": f'attachment; filename="{entity_id}.dxf"'},
+    )
+
+
+@app.get("/api/techdraw/pdf")
+def get_techdraw_pdf(entity_id: str = "part_001_techdraw") -> Response:
+    """Télécharge la planche de dessin technique cotée au format PDF vectoriel normalisé ISO/ASME."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Planche TechDraw introuvable.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, TechDrawDraftingProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas un plan TechDraw.")
+
+    pdf_content = rec.provider.to_pdf()
+    return Response(
+        content=pdf_content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{entity_id}.pdf"'},
     )
 
 

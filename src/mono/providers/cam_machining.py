@@ -367,7 +367,7 @@ class CamMachiningProvider(GeometryProvider):
 
     def post_process_gcode(
         self,
-        flavor: Literal["fanuc", "siemens", "heidenhain", "haas", "linuxcnc"] = "fanuc",
+        flavor: Literal["fanuc", "siemens", "heidenhain", "haas", "linuxcnc", "grbl"] = "fanuc",
     ) -> str:
         """Génère le programme ISO 6983 spécifique au directeur de commande numérique (DCN)."""
         lines: list[str] = []
@@ -414,6 +414,16 @@ class CamMachiningProvider(GeometryProvider):
                 "G54",
                 "M08",
             ])
+        elif flavor == "grbl":
+            lines.extend([
+                "; GRBL UNIVERSAL CNC POST-PROCESSOR",
+                "G21 ; Millimeters",
+                "G90 ; Absolute coordinates",
+                "G17 ; XY Plane",
+                "G94 ; Feed in mm/min",
+                f"S{int(self.params.spindle_rpm)} M03 ; Spindle CW",
+                "G0 Z10.000 ; Rapid to safe height",
+            ])
         else:  # haas
             lines.extend([
                 "%",
@@ -433,6 +443,8 @@ class CamMachiningProvider(GeometryProvider):
                 l_str = f"L X{pt.x:+.3f} Y{pt.y:+.3f} Z{pt.z:+.3f} B{pt.b_deg:+.3f} C{pt.c_deg:+.3f}"
                 l_str += f" F{pt.feedrate:.0f}" if not pt.is_rapid else " FMAX"
                 lines.append(l_str)
+            elif flavor == "grbl":
+                lines.append(f"{g_cmd} X{pt.x:+.3f} Y{pt.y:+.3f} Z{pt.z:+.3f}{f_str}")
             else:
                 lines.append(
                     f"{g_cmd} X{pt.x:+.3f} Y{pt.y:+.3f} Z{pt.z:+.3f} "
@@ -470,6 +482,13 @@ class CamMachiningProvider(GeometryProvider):
                 "M05",
                 "G0 Z25.0",
                 "M30",
+            ])
+        elif flavor == "grbl":
+            lines.extend([
+                "M05 ; Spindle Stop",
+                "G0 Z25.000 ; Retract to clearance",
+                "G0 X0.000 Y0.000 ; Return to origin",
+                "M30 ; End of program",
             ])
         else:
             lines.extend([

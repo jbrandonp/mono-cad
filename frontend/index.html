@@ -164,10 +164,11 @@
               <label style="font-size: 11px; color: var(--text-muted);">Post-Processeur DCN :</label>
               <select id="select-cam-flavor" style="background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px; border-radius: 4px; font-size: 12px;">
                 <option value="fanuc">Fanuc 31i (G43.4 RTCP)</option>
+                <option value="grbl">GRBL (Routeur / Fraiseuse Universelle)</option>
                 <option value="siemens">Siemens 840D (TRAORI)</option>
                 <option value="heidenhain">Heidenhain TNC 640 (M128)</option>
                 <option value="haas">Haas NGC (G234 TCPC)</option>
-                <option value="linuxcnc">LinuxCNC / GRBL (Universel)</option>
+                <option value="linuxcnc">LinuxCNC (5-Axes)</option>
               </select>
             </div>
 
@@ -239,6 +240,9 @@
             </div>
 
             <div style="display: flex; gap: 6px;">
+              <button id="btn-download-techdraw-pdf" class="btn btn-secondary btn-sm" style="flex: 1;">
+                📄 Plan PDF
+              </button>
               <button id="btn-download-techdraw-dxf" class="btn btn-secondary btn-sm" style="flex: 1;">
                 💾 Export DXF
               </button>
@@ -340,6 +344,7 @@
         <div style="background: #0f172a; color: #f8fafc; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;">
           <h2 style="font-size: 16px; margin: 0; font-weight: 600;">📐 Plan Technique Industriel 2D (ISO 128 / ISO 7200 / GD&T)</h2>
           <div style="display: flex; gap: 8px;">
+            <button id="btn-modal-download-pdf" class="btn btn-primary btn-sm" style="background: #ef4444;">📄 Télécharger PDF</button>
             <button id="btn-modal-download-svg" class="btn btn-primary btn-sm" style="background: #2563eb;">💾 Télécharger SVG</button>
             <button id="btn-modal-close-techdraw" class="btn btn-secondary btn-sm" style="background: #475569; color: #fff;">✖ Fermer</button>
           </div>

@@ -95,6 +95,15 @@ def test_post_processors_flavors() -> None:
     assert "LINUXCNC" in linuxcnc_code or "LinuxCNC" in linuxcnc_code
     assert "G43 H1" in linuxcnc_code
 
+    # GRBL Universel : G21 G90 G17 M03 M05 M30
+    grbl_code = provider.post_process_gcode(flavor="grbl")
+    assert "GRBL" in grbl_code
+    assert "G21" in grbl_code
+    assert "G90" in grbl_code
+    assert "M03" in grbl_code
+    assert "M05" in grbl_code
+    assert "M30" in grbl_code
+
 
 def test_cam_strategies_drop_cutter_pocket_profile_probe() -> None:
     """Vérifie l'exécution des stratégies avancées : Drop-Cutter, Évidement, Profilage et Palpage."""

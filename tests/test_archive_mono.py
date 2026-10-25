@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import io
+import json
+import tarfile
 import build123d as bd
 import pytest
+import zstandard as zstd
 
 from mono.core.archive_mono import MonoArchive, MonoArchiveError
 from mono.core.document import MonoDocument
 from mono.providers.brep_build123d import BRepBuild123dProvider
+from mono.providers.cam_machining import CamMachiningProvider
+from mono.providers.biomolecule_gemmi import BiomoleculeProvider
 from mono.providers.techdraw_drafting import TechDrawDraftingProvider, TitleBlock
 
 
@@ -67,12 +72,95 @@ def test_mono_archive_sha256_corruption_detection() -> None:
 
     data = bytearray(MonoArchive.pack(doc))
 
-    # Falsification d'octets au cœur de l'archive compressée
+    # 1. Falsification d'octets au cœur de l'archive compressée (détection Zstandard CRC32)
     corrupt_idx = len(data) // 2
     data[corrupt_idx] ^= 0xFF
 
     with pytest.raises(MonoArchiveError):
         MonoArchive.unpack(bytes(data))
+
+    # 2. Falsification d'un artefact provoquant un rejet de validation SHA-256
+    tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+        cube_step = b"ISO-10303-21; FAKE STEP DATA; ENDSEC;"
+        fake_manifest = {
+            "format": "mono-archive",
+            "schema_version": "1.0.0",
+            "entities": [
+                {
+                    "entity_id": "cube",
+                    "provider_name": "brep_build123d",
+                    "file_path": "brep/cube.step",
+                    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                }
+            ],
+        }
+        man_bytes = json.dumps(fake_manifest).encode("utf-8")
+        ti_m = tarfile.TarInfo("manifest.json")
+        ti_m.size = len(man_bytes)
+        tar.addfile(ti_m, io.BytesIO(man_bytes))
+
+        ti_s = tarfile.TarInfo("brep/cube.step")
+        ti_s.size = len(cube_step)
+        tar.addfile(ti_s, io.BytesIO(cube_step))
+
+    raw_tar = tar_buf.getvalue()
+    cctx = zstd.ZstdCompressor(level=3, write_checksum=True)
+    corrupted_archive = cctx.compress(raw_tar)
+
+    with pytest.raises(MonoArchiveError, match="Corruption détectée"):
+        MonoArchive.unpack(corrupted_archive)
+
+
+def test_multidisciplinary_mono_archive_roundtrip() -> None:
+    """Vérifie le packaging multi-domaines complet (B-Rep STEP, TechDraw SVG/DXF/PDF, CAM Fanuc/GRBL, Bio CIF/BCIF)."""
+    doc = MonoDocument()
+    box = bd.Box(40, 30, 15)
+
+    # 1. B-Rep 3D
+    doc.add_entity("box_cad", BRepBuild123dProvider("box_cad", box), "brep_build123d")
+
+    # 2. Plan 2D TechDraw
+    td = TechDrawDraftingProvider(entity_id="box_dwg", part=box)
+    td.generate_drawing()
+    doc.add_entity("box_dwg", td, "techdraw_drafting")
+
+    # 3. FAO / CAM Machining
+    cam = CamMachiningProvider(part=box)
+    cam.generate_toolpath(strategy="finishing_scallop")
+    doc.add_entity("box_cam", cam, "cam_machining")
+
+    # 4. Biologie Macromoléculaire
+    bio = BiomoleculeProvider(entity_id="box_bio", pdb_code="1CRN")
+    doc.add_entity("box_bio", bio, "biomolecule_gemmi")
+
+    # Empaquetage
+    archive_bytes = MonoArchive.pack(
+        doc,
+        metadata={"title": "Projet Multi-Physique", "author": "Brandon"},
+    )
+    assert len(archive_bytes) > 0
+
+    # Inspection manifeste
+    manifest = MonoArchive.inspect(archive_bytes)
+    assert manifest["entities_count"] == 4
+    file_paths = {ent["file_path"] for ent in manifest["entities"]}
+    assert "brep/box_cad.step" in file_paths
+    assert "techdraw/box_dwg.svg" in file_paths
+    assert "cam/box_cam.gcode" in file_paths
+    assert "bio/box_bio.cif" in file_paths
+
+    # Restauration Round-Trip
+    restored_doc, restored_manifest = MonoArchive.unpack(archive_bytes)
+    assert len(restored_doc.entities) == 4
+    assert "box_cad" in restored_doc.entities
+    assert "box_dwg" in restored_doc.entities
+    assert "box_cam" in restored_doc.entities
+    assert "box_bio" in restored_doc.entities
+    assert isinstance(restored_doc.entities["box_cad"].provider, BRepBuild123dProvider)
+    assert isinstance(restored_doc.entities["box_dwg"].provider, TechDrawDraftingProvider)
+    assert isinstance(restored_doc.entities["box_cam"].provider, CamMachiningProvider)
+    assert isinstance(restored_doc.entities["box_bio"].provider, BiomoleculeProvider)
 
 
 @pytest.mark.asyncio

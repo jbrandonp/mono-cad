@@ -455,6 +455,20 @@ class MonoApp {
       });
     }
 
+    const btnDownloadPdf = document.getElementById('btn-download-techdraw-pdf');
+    if (btnDownloadPdf) {
+      btnDownloadPdf.addEventListener('click', () => {
+        window.open('http://127.0.0.1:8000/api/techdraw/pdf?entity_id=part_001_techdraw', '_blank');
+      });
+    }
+
+    const btnModalDownloadPdf = document.getElementById('btn-modal-download-pdf');
+    if (btnModalDownloadPdf) {
+      btnModalDownloadPdf.addEventListener('click', () => {
+        window.open('http://127.0.0.1:8000/api/techdraw/pdf?entity_id=part_001_techdraw', '_blank');
+      });
+    }
+
     const btnDownloadDxf = document.getElementById('btn-download-techdraw-dxf');
     if (btnDownloadDxf) {
       btnDownloadDxf.addEventListener('click', () => {

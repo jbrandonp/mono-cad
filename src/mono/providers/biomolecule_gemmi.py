@@ -305,8 +305,10 @@ class BiomoleculeProvider(GeometryProvider):
         pdb_code: str | None = None,
         mode: Literal["ball_and_stick", "ribbon", "spheres", "sticks"] = "ball_and_stick",
         scale_to_mm: float = 1.0,
+        entity_id: str | None = None,
     ) -> None:
         """Initialise le fournisseur biomoléculaire avec une chaîne, un fichier ou un code PDB."""
+        self.entity_id: str = entity_id or "biomolecule_model"
         self.mode: Literal["ball_and_stick", "ribbon", "spheres", "sticks"] = mode
         self.scale_to_mm: float = scale_to_mm
         self.raw_pdb_text: str = ""
@@ -340,9 +342,13 @@ class BiomoleculeProvider(GeometryProvider):
                 self.load_pdb(default_pdb)
 
     def load_pdb(self, content: str) -> None:
-        """Charge une structure protéique à partir d'une chaîne au format PDB."""
+        """Charge une structure protéique à partir d'une chaîne au format PDB ou mmCIF."""
         self.raw_pdb_text = content
-        self.structure = gemmi.read_pdb_string(content)
+        trimmed = content.lstrip()
+        if trimmed.startswith("data_") or "loop_" in trimmed:
+            self._load_cif_text(content)
+        else:
+            self.structure = gemmi.read_pdb_string(content)
 
     def _load_cif_text(self, text: str) -> None:
         """Charge un document CIF / mmCIF depuis une chaîne de caractères."""
@@ -851,6 +857,10 @@ class BiomoleculeProvider(GeometryProvider):
             return ""
         doc = self.structure.make_mmcif_document()
         return doc.as_string()
+
+    def to_cif_string(self) -> str:
+        """Alias pour serialize_mmcif(), exportant la structure au format CIF."""
+        return self.serialize_mmcif()
 
     def serialize_binary_cif(self) -> bytes:
         """Sérialise la macromolécule au format binaire BinaryCIF (.bcif) pour Mol* et RCSB PDB."""

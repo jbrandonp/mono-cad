@@ -93,7 +93,7 @@ class MonoArchive:
                             artifact_bytes = f_step.read()
                         file_rel_path = f"brep/{eid}.step"
 
-                    # 2. TechDraw 2D (SVG + DXF)
+                    # 2. TechDraw 2D (SVG + DXF + PDF)
                     elif isinstance(provider, TechDrawDraftingProvider):
                         svg_text = provider.to_svg()
                         artifact_bytes = svg_text.encode("utf-8")
@@ -105,6 +105,13 @@ class MonoArchive:
                         dxf_info.size = len(dxf_bytes)
                         dxf_info.mtime = int(datetime.now(timezone.utc).timestamp())
                         tar.addfile(dxf_info, io.BytesIO(dxf_bytes))
+
+                        # Ajout complémentaire du plan PDF coté normalisé ISO/ASME
+                        pdf_bytes = provider.to_pdf()
+                        pdf_info = tarfile.TarInfo(name=f"techdraw/{eid}.pdf")
+                        pdf_info.size = len(pdf_bytes)
+                        pdf_info.mtime = int(datetime.now(timezone.utc).timestamp())
+                        tar.addfile(pdf_info, io.BytesIO(pdf_bytes))
 
                     # 3. BIM / Architecture IFC4
                     elif isinstance(provider, IfcGeometryProvider):
@@ -118,16 +125,31 @@ class MonoArchive:
                         artifact_bytes = gcode_text.encode("utf-8")
                         file_rel_path = f"cam/{eid}.gcode"
 
+                        # Ajout complémentaire du G-code universel GRBL
+                        grbl_text = provider.post_process_gcode(flavor="grbl")
+                        grbl_bytes = grbl_text.encode("utf-8")
+                        grbl_info = tarfile.TarInfo(name=f"cam/{eid}_grbl.gcode")
+                        grbl_info.size = len(grbl_bytes)
+                        grbl_info.mtime = int(datetime.now(timezone.utc).timestamp())
+                        tar.addfile(grbl_info, io.BytesIO(grbl_bytes))
+
                     # 5. Impression 3D / Additive Slicer
                     elif isinstance(provider, AdditiveSlicerProvider):
                         artifact_bytes = (provider.cached_gcode or "; Mono Slicer").encode("utf-8")
                         file_rel_path = f"slicer/{eid}.gcode"
 
-                    # 6. Biologie Moléculaire (Gemmi CIF/PDB)
+                    # 6. Biologie Moléculaire (Gemmi CIF/BinaryCIF/PDB)
                     elif isinstance(provider, BiomoleculeProvider):
                         cif_text = provider.to_cif_string()
                         artifact_bytes = cif_text.encode("utf-8")
                         file_rel_path = f"bio/{eid}.cif"
+
+                        bcif_bytes = provider.serialize_binary_cif()
+                        if bcif_bytes:
+                            bcif_info = tarfile.TarInfo(name=f"bio/{eid}.bcif")
+                            bcif_info.size = len(bcif_bytes)
+                            bcif_info.mtime = int(datetime.now(timezone.utc).timestamp())
+                            tar.addfile(bcif_info, io.BytesIO(bcif_bytes))
 
                     # 7. Textile XPBD
                     elif isinstance(provider, TextileXpbdProvider):
@@ -188,9 +210,9 @@ class MonoArchive:
             man_info.mtime = int(datetime.now(timezone.utc).timestamp())
             tar.addfile(man_info, io.BytesIO(manifest_bytes))
 
-        # Compression Zstandard haute performance (niveau 3)
+        # Compression Zstandard haute performance (niveau 3) avec somme de contrôle d'intégrité
         raw_tar_data = tar_buf.getvalue()
-        cctx = zstd.ZstdCompressor(level=3)
+        cctx = zstd.ZstdCompressor(level=3, write_checksum=True)
         compressed_mono = cctx.compress(raw_tar_data)
 
         # Sauvegarde sur disque si chemin spécifié
@@ -205,13 +227,16 @@ class MonoArchive:
     @classmethod
     def _decompress_to_tar(cls, data: bytes) -> tarfile.TarFile:
         """Décompresse un flux .mono avec détection automatique (zstd, gzip ou tar brut)."""
+        zstd_magic = b"\x28\xb5\x2f\xfd"
         # 1. Tentative Zstandard
-        try:
-            dctx = zstd.ZstdDecompressor()
-            tar_bytes = dctx.decompress(data)
-            return tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r")
-        except Exception:
-            pass
+        if data.startswith(zstd_magic) or len(data) >= 4:
+            try:
+                dctx = zstd.ZstdDecompressor()
+                tar_bytes = dctx.decompress(data)
+                return tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r")
+            except Exception as zerr:
+                if data.startswith(zstd_magic):
+                    raise MonoArchiveError(f"Conteneur Zstandard corrompu ou falsifié : {zerr}") from zerr
 
         # 2. Tentative tarfile standard (gzip / tar brut)
         try:
@@ -236,7 +261,10 @@ class MonoArchive:
             man_file = tar.extractfile("manifest.json")
             if man_file is None:
                 raise MonoArchiveError("manifest.json manquant dans le conteneur .mono")
-            manifest_dict = json.loads(man_file.read().decode("utf-8"))
+            try:
+                manifest_dict = json.loads(man_file.read().decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as jerr:
+                raise MonoArchiveError(f"manifest.json corrompu ou illisible : {jerr}") from jerr
             return manifest_dict  # type: ignore
         finally:
             tar.close()
@@ -259,7 +287,10 @@ class MonoArchive:
             if man_file is None:
                 raise MonoArchiveError("manifest.json introuvable dans l'archive .mono")
 
-            manifest = json.loads(man_file.read().decode("utf-8"))
+            try:
+                manifest = json.loads(man_file.read().decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as jerr:
+                raise MonoArchiveError(f"manifest.json corrompu ou illisible : {jerr}") from jerr
             doc = MonoDocument()
             doc.version = manifest.get("version", "2.0")
             doc.units = manifest.get("units", doc.units)
@@ -286,7 +317,7 @@ class MonoArchive:
 
                     art_file = tar.extractfile(rel_path)
                     if art_file is None:
-                        continue
+                        raise MonoArchiveError(f"Artefact '{rel_path}' manquant ou illisible dans le conteneur .mono.")
                     art_bytes = art_file.read()
 
                     # Vérification d'intégrité SHA-256
@@ -320,7 +351,8 @@ class MonoArchive:
                         provider = AdditiveSlicerProvider()
 
                     elif p_name in ("biomolecule_gemmi", "biomolecule"):
-                        provider = BiomoleculeProvider(entity_id=eid)
+                        cif_txt = art_bytes.decode("utf-8", errors="ignore")
+                        provider = BiomoleculeProvider(entity_id=eid, pdb_content=cif_txt)
 
                     elif p_name == "textile_xpbd":
                         provider = TextileXpbdProvider(entity_id=eid)

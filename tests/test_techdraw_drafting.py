@@ -175,3 +175,40 @@ async def test_techdraw_api_endpoints() -> None:
         assert res_dxf.status_code == 200
         assert "application/dxf" in res_dxf.headers["content-type"]
         assert len(res_dxf.content) > 1000
+
+        # 4. Récupération PDF vectoriel normalisé
+        res_pdf = await client.get(f"/api/techdraw/pdf?entity_id={td_id}")
+        assert res_pdf.status_code == 200
+        assert "application/pdf" in res_pdf.headers["content-type"]
+        assert res_pdf.content.startswith(b"%PDF-")
+        assert len(res_pdf.content) > 1000
+
+
+def test_pdf_export_iso_asme() -> None:
+    """Vérifie la génération PDF vectorielle de la planche technique normalisée avec cartouche et GD&T."""
+    box = bd.Box(50, 30, 20)
+    tb = TitleBlock(
+        title="PLATINE GUIDAGE",
+        drawing_number="DWG-5001",
+        author="Brandon",
+        material="Inconel 718",
+        company="MONO AEROSPACE",
+    )
+    provider = TechDrawDraftingProvider(part=box, sheet_format="A3", title_block=tb)
+    provider.generate_drawing()
+    provider.add_gdt_frame(
+        GdtFeatureControlFrame(
+            symbol="perpendicularity",
+            tolerance_mm=0.02,
+            diameter_symbol=False,
+            material_condition="mmc",
+            datum_primary="A",
+            datum_secondary="B",
+            view_id="front",
+        )
+    )
+
+    pdf_bytes = provider.to_pdf()
+    assert isinstance(pdf_bytes, bytes)
+    assert pdf_bytes.startswith(b"%PDF-")
+    assert len(pdf_bytes) > 2000

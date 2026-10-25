@@ -15,6 +15,7 @@ from typing import Literal
 
 import build123d as bd
 import ezdxf
+from fpdf import FPDF
 import numpy as np
 
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
@@ -591,6 +592,183 @@ class TechDrawDraftingProvider(GeometryProvider):
         if not self.cached_svg:
             self.generate_drawing()
         return self.cached_svg
+
+    def to_pdf(self) -> bytes:
+        """Génère la planche technique complète au format PDF normalisé ISO 7200 / ASME Y14.1."""
+        if not self.views:
+            self.generate_drawing()
+
+        orientation_code = "L" if self.orientation == "landscape" else "P"
+        w = float(self.width_mm)
+        h = float(self.height_mm)
+
+        pdf = FPDF(
+            orientation=orientation_code,
+            unit="mm",
+            format=(h, w) if self.orientation == "landscape" else (w, h),
+        )
+        pdf.set_auto_page_break(False)
+        pdf.add_page()
+
+        m = float(self.margin_mm)
+
+        # 1. Cadres extérieur et technique
+        pdf.set_line_width(0.25)
+        pdf.set_draw_color(0, 0, 0)
+        pdf.rect(0.5, 0.5, w - 1.0, h - 1.0)
+
+        pdf.set_line_width(0.70)
+        pdf.rect(m, m, w - 2.0 * m, h - 2.0 * m)
+
+        # 2. Cartouche normalisé ISO 7200 (coin inférieur droit)
+        tb_w, tb_h = 180.0, 36.0
+        tb_x, tb_y = w - m - tb_w, h - m - tb_h
+
+        pdf.set_line_width(0.50)
+        pdf.rect(tb_x, tb_y, tb_w, tb_h)
+
+        # Lignes internes du cartouche
+        pdf.set_line_width(0.25)
+        pdf.line(tb_x, tb_y + 12.0, tb_x + tb_w, tb_y + 12.0)
+        pdf.line(tb_x, tb_y + 24.0, tb_x + tb_w, tb_y + 24.0)
+        pdf.line(tb_x + 90.0, tb_y + 12.0, tb_x + 90.0, tb_y + tb_h)
+        pdf.line(tb_x + 135.0, tb_y + 12.0, tb_x + 135.0, tb_y + tb_h)
+
+        # Textes du cartouche
+        pdf.set_font("helvetica", "B", 10)
+        pdf.text(tb_x + 3.0, tb_y + 5.5, self.title_block.company[:35])
+        pdf.set_font("helvetica", "B", 12)
+        pdf.text(tb_x + 3.0, tb_y + 10.5, self.title_block.title[:35])
+
+        pdf.set_font("helvetica", "", 8)
+        pdf.text(tb_x + 3.0, tb_y + 17.0, f"DWG: {self.title_block.drawing_number}")
+        pdf.text(tb_x + 3.0, tb_y + 21.5, f"MAT: {self.title_block.material[:25]}")
+
+        pdf.text(tb_x + 93.0, tb_y + 17.0, f"ECH: {self.title_block.scale}")
+        pdf.text(tb_x + 93.0, tb_y + 21.5, f"DATE: {self.title_block.date}")
+
+        pdf.text(tb_x + 138.0, tb_y + 17.0, f"REV: {self.title_block.revision}")
+        pdf.text(tb_x + 138.0, tb_y + 21.5, f"AUT: {self.title_block.author[:18]}")
+
+        pdf.text(tb_x + 3.0, tb_y + 30.0, f"MAT: {self.title_block.material[:25]}")
+        pdf.text(tb_x + 93.0, tb_y + 30.0, "TOL. GEN: ISO 2768-mK")
+        pdf.text(tb_x + 138.0, tb_y + 30.0, f"PROJ: {self.title_block.projection_system.upper()}")
+
+        # 3. Vues orthographiques et isométrique
+        for v in self.views.values():
+            vx, vy, vscale = float(v.center_x_mm), float(v.center_y_mm), float(v.scale)
+
+            # Titre de vue
+            pdf.set_font("helvetica", "B", 8)
+            pdf.set_draw_color(0, 0, 0)
+            pdf.text(vx - 20.0, vy + (35.0 * vscale + 8.0), f"{v.title} (ECH {self.title_block.scale})")
+
+            # Arêtes cachées (trait interrompu 0.25 mm)
+            pdf.set_line_width(0.25)
+            pdf.set_draw_color(90, 90, 90)
+            pdf.set_dash_pattern(dash=1.5, gap=1.0)
+            for poly in v.hidden_polylines:
+                if len(poly) >= 2:
+                    for i in range(len(poly) - 1):
+                        x1 = vx + float(poly[i][0]) * vscale
+                        y1 = vy - float(poly[i][1]) * vscale
+                        x2 = vx + float(poly[i + 1][0]) * vscale
+                        y2 = vy - float(poly[i + 1][1]) * vscale
+                        pdf.line(x1, y1, x2, y2)
+            pdf.set_dash_pattern()  # Réinitialisation trait continu
+
+            # Arêtes vues (trait fort continu 0.45 mm)
+            pdf.set_line_width(0.45)
+            pdf.set_draw_color(0, 0, 0)
+            for poly in v.visible_polylines:
+                if len(poly) >= 2:
+                    for i in range(len(poly) - 1):
+                        x1 = vx + float(poly[i][0]) * vscale
+                        y1 = vy - float(poly[i][1]) * vscale
+                        x2 = vx + float(poly[i + 1][0]) * vscale
+                        y2 = vy - float(poly[i + 1][1]) * vscale
+                        pdf.line(x1, y1, x2, y2)
+
+            # Cotes associatives
+            pdf.set_line_width(0.25)
+            pdf.set_draw_color(20, 20, 20)
+            for d in v.dimensions:
+                x1 = vx + float(d.p1[0]) * vscale
+                y1 = vy - float(d.p1[1]) * vscale
+                x2 = vx + float(d.p2[0]) * vscale
+                y2 = vy - float(d.p2[1]) * vscale
+                off = float(d.offset_mm)
+                txt = d.text_override or f"{d.value_mm:.1f}"
+
+                if d.dim_type == "horizontal":
+                    dim_y = y1 - off
+                    # Lignes de rappel
+                    pdf.line(x1, y1, x1, dim_y - (1.5 if off > 0 else -1.5))
+                    pdf.line(x2, y2, x2, dim_y - (1.5 if off > 0 else -1.5))
+                    # Ligne de cote
+                    pdf.line(x1, dim_y, x2, dim_y)
+                    # Flèches
+                    pdf.polygon([(x1, dim_y), (x1 + 2.0, dim_y - 0.7), (x1 + 2.0, dim_y + 0.7)], style="F")
+                    pdf.polygon([(x2, dim_y), (x2 - 2.0, dim_y - 0.7), (x2 - 2.0, dim_y + 0.7)], style="F")
+                    # Texte de cote
+                    pdf.set_font("helvetica", "", 7)
+                    pdf.text((x1 + x2) * 0.5 - 4.0, dim_y - 1.0, txt)
+
+                elif d.dim_type == "vertical":
+                    dim_x = x1 + off
+                    # Lignes de rappel
+                    pdf.line(x1, y1, dim_x + (1.5 if off > 0 else -1.5), y1)
+                    pdf.line(x2, y2, dim_x + (1.5 if off > 0 else -1.5), y2)
+                    # Ligne de cote
+                    pdf.line(dim_x, y1, dim_x, y2)
+                    # Flèches
+                    pdf.polygon([(dim_x, y1), (dim_x - 0.7, y1 + 2.0), (dim_x + 0.7, y1 + 2.0)], style="F")
+                    pdf.polygon([(dim_x, y2), (dim_x - 0.7, y2 - 2.0), (dim_x + 0.7, y2 - 2.0)], style="F")
+                    # Texte de cote
+                    pdf.set_font("helvetica", "", 7)
+                    pdf.text(dim_x + 1.5, (y1 + y2) * 0.5 + 1.0, txt)
+
+            # Cadres GD&T
+            sym_map: dict[str, str] = {
+                "flatness": "[-]",
+                "straightness": "---",
+                "circularity": "(O)",
+                "cylindricity": "/O/",
+                "perpendicularity": "_|_",
+                "parallelism": "//",
+                "angularity": "/_",
+                "position": "(+)",
+                "concentricity": "((O))",
+                "coaxiality": "((O))",
+                "symmetry": "-|-",
+                "circular_runout": "->",
+                "total_runout": "->>",
+            }
+            for g in v.gdt_frames:
+                gx = vx + float(g.x_mm)
+                gy = vy - float(g.y_mm)
+                sym_str = sym_map.get(g.symbol.lower(), g.symbol.upper()[:4])
+                mat_str = " (M)" if g.material_condition == "mmc" else (" (L)" if g.material_condition == "lmc" else "")
+                dia_str = "DIA " if g.diameter_symbol else ""
+                val_str = f"{dia_str}{g.tolerance_mm:.2f}{mat_str}"
+
+                # Cadre rectangulaire compartimenté
+                pdf.set_line_width(0.35)
+                pdf.set_draw_color(0, 0, 0)
+                pdf.rect(gx - 20.0, gy, 40.0, 6.0)
+                pdf.line(gx - 12.0, gy, gx - 12.0, gy + 6.0)
+                pdf.line(gx + 6.0, gy, gx + 6.0, gy + 6.0)
+                pdf.line(gx + 13.0, gy, gx + 13.0, gy + 6.0)
+
+                pdf.set_font("helvetica", "B", 7)
+                pdf.text(gx - 18.0, gy + 4.2, sym_str[:4])
+                pdf.set_font("helvetica", "", 6.5)
+                pdf.text(gx - 10.5, gy + 4.2, val_str)
+                pdf.text(gx + 8.0, gy + 4.2, g.datum_primary or "A")
+                if g.datum_secondary:
+                    pdf.text(gx + 14.5, gy + 4.2, g.datum_secondary)
+
+        return bytes(pdf.output())
 
     # --- Contrat GeometryProvider ---
 
