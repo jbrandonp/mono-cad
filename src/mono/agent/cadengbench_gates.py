@@ -10,6 +10,7 @@ from OCP.gp import gp_Lin, gp_Pnt, gp_Dir
 
 from mono.core.document import MonoDocument
 from mono.execution.ecip_executor import execute_ecip_cad_block, ECIPExecutionError
+from mono.providers.fea_gmsh import FeaGmshProvider, FEAMaterial, FEABoundaryCondition
 
 
 class GateLevel(str, Enum):
@@ -18,6 +19,7 @@ class GateLevel(str, Enum):
     L1_DFM = "L1_DFM"
     L2_Z_PARAMETRIC = "L2_Z_PARAMETRIC"
     L2_E_ISOLATION = "L2_E_ISOLATION"
+    L3_STRUCTURAL_FEA = "L3_STRUCTURAL_FEA"
 
 
 @dataclass(frozen=True)
@@ -66,20 +68,35 @@ class L2EResult:
 
 
 @dataclass(frozen=True)
+class L3Result:
+    """Résultat de la Porte L3 : Résistance mécanique et intégrité structurelle FEA."""
+    is_valid: bool
+    max_von_mises_mpa: float
+    yield_strength_mpa: float
+    safety_factor: float
+    target_safety_factor: float
+    applied_force_n: tuple[float, float, float]
+    material_name: str
+    error: str | None = None
+    details: str = ""
+
+
+@dataclass(frozen=True)
 class GateEvaluationResult:
-    """Rapport consolidé des 4 portes déterministes CADEngBench (L0, L1, L2-Z, L2-E)."""
+    """Rapport consolidé des portes déterministes CADEngBench (L0, L1, L2-Z, L2-E, L3)."""
     overall_passed: bool
     score: float  # Score composite normalisé [0.0, 1.0]
     l0: L0Result
     l1: L1Result
     l2_z: L2ZResult
     l2_e: L2EResult
+    l3: L3Result | None = None
     diagnostics: list[str] = field(default_factory=list)
     feedback_context: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Convertit le résultat en dictionnaire structuré prêt pour l'API REST."""
-        return {
+        res: dict[str, object] = {
             "overall_passed": self.overall_passed,
             "score": self.score,
             "l0": {
@@ -115,9 +132,21 @@ class GateEvaluationResult:
                 "clashing_entities": self.l2_e.clashing_entities,
                 "details": self.l2_e.details,
             },
+            "l3": None if self.l3 is None else {
+                "is_valid": self.l3.is_valid,
+                "max_von_mises_mpa": self.l3.max_von_mises_mpa,
+                "yield_strength_mpa": self.l3.yield_strength_mpa,
+                "safety_factor": self.l3.safety_factor,
+                "target_safety_factor": self.l3.target_safety_factor,
+                "applied_force_n": list(self.l3.applied_force_n),
+                "material_name": self.l3.material_name,
+                "error": self.l3.error,
+                "details": self.l3.details,
+            },
             "diagnostics": self.diagnostics,
             "feedback_context": self.feedback_context,
         }
+        return res
 
 
 class CADEngBenchGatekeeper:
@@ -410,6 +439,106 @@ class CADEngBenchGatekeeper:
         )
 
     @classmethod
+    def evaluate_l3_structural_fea(
+        cls,
+        part: bd.Part | bd.Solid | bd.Compound,
+        material: FEAMaterial | None = None,
+        applied_force_n: tuple[float, float, float] | None = None,
+        target_safety_factor: float = 1.5,
+        fixed_predicate: str = "min_z",
+        load_predicate: str = "max_z",
+        element_size_max: float = 6.0,
+        yield_strength_mpa: float | None = None,
+    ) -> L3Result:
+        """Porte L3 : Intégrité structurelle et résistance mécanique par éléments finis (FEA).
+
+        Calcule les contraintes de Von Mises via FeaGmshProvider (maillage C3D10 + CalculiX ccx).
+        Rejette automatiquement la pièce conçue si sigma_max > Re / s (soit facteur de sécurité Sf < target_safety_factor).
+        """
+        # Résolution du matériau
+        mat = material
+        if mat is None:
+            re_val = yield_strength_mpa if yield_strength_mpa is not None else 275.0
+            mat = FEAMaterial(
+                name="ALUMINUM_6061_T6",
+                young_modulus_gpa=70.0,
+                poisson_ratio=0.33,
+                yield_strength_mpa=re_val,
+            )
+        elif yield_strength_mpa is not None:
+            mat = FEAMaterial(
+                name=mat.name,
+                young_modulus_gpa=mat.young_modulus_gpa,
+                poisson_ratio=mat.poisson_ratio,
+                yield_strength_mpa=yield_strength_mpa,
+                density_kg_m3=mat.density_kg_m3,
+            )
+
+        force = applied_force_n if applied_force_n is not None else (0.0, 0.0, -2500.0)
+
+        bc = FEABoundaryCondition(
+            fixed_predicate=fixed_predicate,
+            load_predicate=load_predicate,
+            applied_force_n=force,
+        )
+
+        try:
+            provider = FeaGmshProvider(
+                entity_id="gate_l3_structural",
+                part=part,
+                material=mat,
+                boundary=bc,
+                element_size_max=element_size_max,
+                target_safety_factor=target_safety_factor,
+            )
+            fea_res = provider.solve()
+
+            sigma_max = float(fea_res.max_von_mises_mpa)
+            sf = float(fea_res.safety_factor)
+            re_mpa = float(mat.yield_strength_mpa)
+            sigma_allow = re_mpa / target_safety_factor
+
+            # Condition stricte de résistance : sigma_max <= Re / s (Sf >= s)
+            is_valid = bool(sigma_max <= sigma_allow and sf >= target_safety_factor)
+
+            error_msg: str | None = None
+            if not is_valid:
+                error_msg = (
+                    f"Contrainte de Von Mises maximale excessive : {sigma_max:.2f} MPa "
+                    f"> admissible {sigma_allow:.2f} MPa (Re={re_mpa:.1f} MPa, Sf={sf:.2f} < {target_safety_factor:.2f}). "
+                    f"Risque avéré de déformation plastique ou rupture mécanique sous charge nominale."
+                )
+
+            details = (
+                f"Résistance mécanique conforme : Von Mises max {sigma_max:.2f} MPa <= {sigma_allow:.2f} MPa "
+                f"(Sf={sf:.2f} >= {target_safety_factor:.2f})."
+            )
+
+            return L3Result(
+                is_valid=is_valid,
+                max_von_mises_mpa=sigma_max,
+                yield_strength_mpa=re_mpa,
+                safety_factor=sf,
+                target_safety_factor=target_safety_factor,
+                applied_force_n=force,
+                material_name=mat.name,
+                error=error_msg,
+                details=details,
+            )
+        except Exception as exc:
+            return L3Result(
+                is_valid=False,
+                max_von_mises_mpa=0.0,
+                yield_strength_mpa=float(mat.yield_strength_mpa),
+                safety_factor=0.0,
+                target_safety_factor=target_safety_factor,
+                applied_force_n=force,
+                material_name=mat.name,
+                error=f"Erreur d'exécution de la simulation FEA Porte L3 : {exc}",
+                details="Échec de résolution Gmsh / CalculiX.",
+            )
+
+    @classmethod
     def evaluate(
         cls,
         entity_id: str,
@@ -420,8 +549,15 @@ class CADEngBenchGatekeeper:
         doc: MonoDocument | None = None,
         initial_entity_snapshots: dict[str, tuple[float, tuple[float, float, float]]] | None = None,
         unit_scale_to_meters: float = 0.001,
+        material: FEAMaterial | None = None,
+        applied_force_n: tuple[float, float, float] | None = None,
+        target_safety_factor: float = 1.5,
+        fixed_predicate: str = "min_z",
+        load_predicate: str = "max_z",
+        yield_strength_mpa: float | None = None,
+        evaluate_l3: bool = False,
     ) -> GateEvaluationResult:
-        """Évalue l'ensemble des 4 portes déterministes CADEngBench (L0, L1, L2-Z, L2-E).
+        """Évalue l'ensemble des portes déterministes CADEngBench (L0, L1, L2-Z, L2-E, et optionnellement L3 FEA).
 
         Returns:
             GateEvaluationResult: Bilan complet avec score composite et contexte d'auto-réparation.
@@ -465,14 +601,48 @@ class CADEngBenchGatekeeper:
         for clash in l2_e.clashing_entities:
             diagnostics.append(f"[Porte L2-E Collision Physique] {clash}")
 
-        # Calcul du score composite pondéré (L0: 40%, L1: 30%, L2-Z: 15%, L2-E: 15%)
-        w_l0 = 0.40 if l0.is_valid else 0.0
-        w_l1 = 0.30 if l1.is_valid else 0.0
-        w_l2_z = 0.15 if l2_z.is_valid else 0.0
-        w_l2_e = 0.15 if l2_e.is_valid else 0.0
-        score = round(w_l0 + w_l1 + w_l2_z + w_l2_e, 3)
+        # 5. Porte L3 (Résistance Mécanique FEA Automatique)
+        l3: L3Result | None = None
+        should_eval_l3 = (
+            evaluate_l3
+            or (material is not None and applied_force_n is not None)
+            or (yield_strength_mpa is not None and applied_force_n is not None)
+        )
+        if should_eval_l3 and l0.is_valid:
+            l3 = cls.evaluate_l3_structural_fea(
+                part=part,
+                material=material,
+                applied_force_n=applied_force_n,
+                target_safety_factor=target_safety_factor,
+                fixed_predicate=fixed_predicate,
+                load_predicate=load_predicate,
+                yield_strength_mpa=yield_strength_mpa,
+            )
+            if not l3.is_valid:
+                diagnostics.append(f"[Porte L3 FEA ÉCHOUÉE] {l3.error}")
+            else:
+                diagnostics.append(f"[Porte L3 FEA Validée] {l3.details}")
 
-        overall_passed = bool(l0.is_valid and l1.is_valid and l2_z.is_valid and l2_e.is_valid)
+        # Calcul du score composite pondéré
+        if l3 is not None:
+            # Pondération avec Porte L3 : L0: 30%, L1: 25%, L2-Z: 15%, L2-E: 10%, L3: 20%
+            w_l0 = 0.30 if l0.is_valid else 0.0
+            w_l1 = 0.25 if l1.is_valid else 0.0
+            w_l2_z = 0.15 if l2_z.is_valid else 0.0
+            w_l2_e = 0.10 if l2_e.is_valid else 0.0
+            w_l3 = 0.20 if l3.is_valid else 0.0
+            score = round(w_l0 + w_l1 + w_l2_z + w_l2_e + w_l3, 3)
+            overall_passed = bool(
+                l0.is_valid and l1.is_valid and l2_z.is_valid and l2_e.is_valid and l3.is_valid
+            )
+        else:
+            # Pondération standard L0–L2 (L0: 40%, L1: 30%, L2-Z: 15%, L2-E: 15%)
+            w_l0 = 0.40 if l0.is_valid else 0.0
+            w_l1 = 0.30 if l1.is_valid else 0.0
+            w_l2_z = 0.15 if l2_z.is_valid else 0.0
+            w_l2_e = 0.15 if l2_e.is_valid else 0.0
+            score = round(w_l0 + w_l1 + w_l2_z + w_l2_e, 3)
+            overall_passed = bool(l0.is_valid and l1.is_valid and l2_z.is_valid and l2_e.is_valid)
 
         feedback_context: str | None = None
         if not overall_passed:
@@ -487,8 +657,47 @@ class CADEngBenchGatekeeper:
             l1=l1,
             l2_z=l2_z,
             l2_e=l2_e,
+            l3=l3,
             diagnostics=diagnostics,
             feedback_context=feedback_context,
+        )
+
+    @classmethod
+    def evaluate_all(
+        cls,
+        entity_id: str,
+        part: bd.Part | bd.Solid | bd.Compound,
+        target_dimensions: dict[str, float] | None = None,
+        script_code: str | None = None,
+        base_params: dict[str, float] | None = None,
+        doc: MonoDocument | None = None,
+        initial_entity_snapshots: dict[str, tuple[float, tuple[float, float, float]]] | None = None,
+        unit_scale_to_meters: float = 0.001,
+        material: FEAMaterial | None = None,
+        applied_force_n: tuple[float, float, float] | None = None,
+        target_safety_factor: float = 1.5,
+        fixed_predicate: str = "min_z",
+        load_predicate: str = "max_z",
+        yield_strength_mpa: float | None = None,
+        evaluate_l3: bool = False,
+    ) -> GateEvaluationResult:
+        """Alias officiel pour evaluate() selon la spécification CADEngBenchGates."""
+        return cls.evaluate(
+            entity_id=entity_id,
+            part=part,
+            target_dimensions=target_dimensions,
+            script_code=script_code,
+            base_params=base_params,
+            doc=doc,
+            initial_entity_snapshots=initial_entity_snapshots,
+            unit_scale_to_meters=unit_scale_to_meters,
+            material=material,
+            applied_force_n=applied_force_n,
+            target_safety_factor=target_safety_factor,
+            fixed_predicate=fixed_predicate,
+            load_predicate=load_predicate,
+            yield_strength_mpa=yield_strength_mpa,
+            evaluate_l3=evaluate_l3,
         )
 
     @classmethod
@@ -540,3 +749,6 @@ class CADEngBenchGatekeeper:
                     undercut_count += 1
 
         return undercut_count
+
+
+CADEngBenchGates = CADEngBenchGatekeeper

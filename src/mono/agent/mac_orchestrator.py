@@ -247,7 +247,21 @@ class MACOrchestrator:
                 error_feedback = f"Erreur d'exécution ECIP à l'itération {iteration} : {exc}"
                 continue
 
-            # Étape 3 : Audit Déterministe B-Rep (Portes L0-L2 CADEngBench)
+            # Détection de spécifications mécaniques pour la Porte L3
+            eval_l3 = False
+            force_val: float | None = None
+            re_val: float | None = None
+            if spec_plan.parameters:
+                if "force_n" in spec_plan.parameters:
+                    force_val = float(spec_plan.parameters["force_n"])
+                    eval_l3 = True
+                if "yield_strength_mpa" in spec_plan.parameters:
+                    re_val = float(spec_plan.parameters["yield_strength_mpa"])
+                    eval_l3 = True
+
+            applied_force = (0.0, 0.0, -abs(force_val)) if force_val is not None else None
+
+            # Étape 3 : Audit Déterministe B-Rep (Portes L0-L3 CADEngBench)
             gate_eval = CADEngBenchGatekeeper.evaluate(
                 entity_id=spec_plan.target_entity_id,
                 part=last_part,
@@ -257,6 +271,9 @@ class MACOrchestrator:
                 doc=doc,
                 initial_entity_snapshots=initial_snapshots,
                 unit_scale_to_meters=0.001,
+                yield_strength_mpa=re_val,
+                applied_force_n=applied_force,
+                evaluate_l3=eval_l3,
             )
             last_gate_result = gate_eval
 

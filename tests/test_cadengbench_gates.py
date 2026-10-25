@@ -5,12 +5,17 @@ from mono.core.document import MonoDocument
 from mono.providers.brep_build123d import BRepBuild123dProvider
 from mono.agent.cadengbench_gates import (
     CADEngBenchGatekeeper,
+    CADEngBenchGates,
     GateEvaluationResult,
     L0Result,
     L1Result,
     L2ZResult,
     L2EResult,
+    L3Result,
 )
+from mono.providers.fea_gmsh import FEAMaterial
+from mono.ipc.server import app, state
+from starlette.testclient import TestClient
 
 
 def test_gate_l0_valid_box() -> None:
@@ -150,3 +155,98 @@ def test_full_cadengbench_evaluation_and_dict() -> None:
     assert data["overall_passed"] is True
     assert data["score"] == 1.0
     assert "l0" in data and "l1" in data and "l2_z" in data and "l2_e" in data
+    assert data["l3"] is None
+
+
+def test_gate_l3_structural_fea_safe() -> None:
+    """Vérifie que la Porte L3 valide une pièce sous charge dont la contrainte reste sous Re / 1.5."""
+    bar = bd.Box(10.0, 10.0, 50.0)
+    res = CADEngBenchGates.evaluate_l3_structural_fea(
+        part=bar,
+        applied_force_n=(0.0, 0.0, 1000.0),
+        yield_strength_mpa=275.0,
+        target_safety_factor=1.5,
+    )
+
+    assert isinstance(res, L3Result)
+    assert res.is_valid is True
+    assert res.safety_factor >= 1.5
+    assert res.max_von_mises_mpa <= (275.0 / 1.5)
+    assert res.error is None
+    assert "Conforme" in res.details or "conforme" in res.details
+
+
+def test_gate_l3_structural_fea_overload_rejection() -> None:
+    """Vérifie que la Porte L3 rejette automatiquement une pièce en surcharge (sigma_max > Re / 1.5)."""
+    bar = bd.Box(10.0, 10.0, 50.0)
+    # Surcharge de 50 kN sur section 10x10 mm (sigma analytique ~ 500 MPa > 183.3 MPa)
+    res = CADEngBenchGates.evaluate_l3_structural_fea(
+        part=bar,
+        applied_force_n=(0.0, 0.0, 50000.0),
+        yield_strength_mpa=275.0,
+        target_safety_factor=1.5,
+    )
+
+    assert isinstance(res, L3Result)
+    assert res.is_valid is False
+    assert res.safety_factor < 1.5
+    assert res.max_von_mises_mpa > (275.0 / 1.5)
+    assert res.error is not None
+    assert "excessive" in res.error.lower() or "plastification" in res.error.lower()
+
+
+def test_cadengbench_gates_evaluate_all_with_l3() -> None:
+    """Vérifie evaluate_all() avec intégration complète de la Porte L3 et pondération du score."""
+    bar = bd.Box(12.0, 12.0, 40.0)
+
+    # 1. Cas conforme
+    res_ok = CADEngBenchGates.evaluate_all(
+        entity_id="bracket_safe",
+        part=bar,
+        applied_force_n=(0.0, 0.0, 1200.0),
+        yield_strength_mpa=300.0,
+        target_safety_factor=1.5,
+        evaluate_l3=True,
+    )
+    assert res_ok.overall_passed is True
+    assert res_ok.l3 is not None
+    assert res_ok.l3.is_valid is True
+    assert res_ok.score == 1.0
+
+    # 2. Cas non conforme (charge destructrice de 100 kN)
+    res_fail = CADEngBenchGates.evaluate_all(
+        entity_id="bracket_weak",
+        part=bar,
+        applied_force_n=(0.0, 0.0, 100000.0),
+        yield_strength_mpa=300.0,
+        target_safety_factor=1.5,
+        evaluate_l3=True,
+    )
+    assert res_fail.overall_passed is False
+    assert res_fail.l3 is not None
+    assert res_fail.l3.is_valid is False
+    assert res_fail.score == 0.8  # 1.0 - 0.20 (porte L3 échouée)
+    assert any("[Porte L3 FEA ÉCHOUÉE]" in d for d in res_fail.diagnostics)
+
+
+def test_api_gates_evaluate_with_l3_endpoint() -> None:
+    """Vérifie l'endpoint REST /api/gates/evaluate avec la Porte L3."""
+    client = TestClient(app)
+    bar = bd.Box(10.0, 10.0, 50.0)
+    state.doc.add_entity("bar_api", BRepBuild123dProvider("bar_api", bar))
+
+    payload = {
+        "entity_id": "bar_api",
+        "applied_force_n": [0.0, 0.0, 1000.0],
+        "yield_strength_mpa": 275.0,
+        "target_safety_factor": 1.5,
+        "evaluate_l3": True,
+    }
+    response = client.post("/api/gates/evaluate", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["overall_passed"] is True
+    assert data["l3"] is not None
+    assert data["l3"]["is_valid"] is True
+    assert data["l3"]["safety_factor"] >= 1.5
+

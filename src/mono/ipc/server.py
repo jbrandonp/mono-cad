@@ -43,10 +43,15 @@ class ParameterUpdateRequest(BaseModel):
 
 
 class GateEvaluationRequest(BaseModel):
-    """Schéma de requête pour l'audit des portes déterministes CADEngBench."""
+    """Schéma de requête pour l'audit des portes déterministes CADEngBench (L0–L3)."""
 
     entity_id: str
     target_dimensions: dict[str, float] | None = None
+    material: str | None = None
+    yield_strength_mpa: float | None = None
+    applied_force_n: tuple[float, float, float] | None = None
+    target_safety_factor: float = 1.5
+    evaluate_l3: bool = False
 
 
 class AgentRunRequest(BaseModel):
@@ -1136,7 +1141,7 @@ def update_parameter(name: str, req: ParameterUpdateRequest) -> dict[str, object
 
 @app.post("/api/gates/evaluate")
 def evaluate_gates(req: GateEvaluationRequest) -> dict[str, object]:
-    """Évalue les 4 portes déterministes CADEngBench (L0–L2) sur une entité."""
+    """Évalue les portes déterministes CADEngBench (L0–L3) sur une entité."""
     if req.entity_id not in state.doc.entities:
         raise HTTPException(status_code=404, detail=f"Entité '{req.entity_id}' introuvable dans la scène.")
 
@@ -1153,6 +1158,10 @@ def evaluate_gates(req: GateEvaluationRequest) -> dict[str, object]:
         script_code=ent.script_code,
         base_params=base_params,
         doc=state.doc,
+        yield_strength_mpa=req.yield_strength_mpa,
+        applied_force_n=req.applied_force_n,
+        target_safety_factor=req.target_safety_factor,
+        evaluate_l3=req.evaluate_l3,
     )
     return res.to_dict()
 

@@ -4,7 +4,7 @@
 ### **Environnement d'Ingénierie Multidisciplinaire Unifié Piloté par Intelligence Artificielle**
 #### *De la Macromolécule Atomique ($10^{-9}\text{ m}$) à l'Architecture Bâtiment ($10^{2}\text{ m}$)*
 
-[![Tests](https://img.shields.io/badge/tests-99%20passed-brightgreen?style=for-the-badge&logo=pytest)](file:///tests)
+[![Tests](https://img.shields.io/badge/tests-103%20passed-brightgreen?style=for-the-badge&logo=pytest)](file:///tests)
 [![Coverage](https://img.shields.io/badge/coverage-83%25-green?style=for-the-badge)](file:///src/mono)
 [![Python](https://img.shields.io/badge/python-3.12-blue?style=for-the-badge&logo=python)](pyproject.toml)
 [![TypeScript](https://img.shields.io/badge/typescript-5.9-3178C6?style=for-the-badge&logo=typescript)](frontend/src/main.ts)
@@ -321,6 +321,7 @@ sequenceDiagram
 | **Porte L1** | **Conformité DFM Usinabilité** | - Épaisseur minimale de paroi $t_{\min} \ge 1.0\text{ mm}$ (ray-casting normal intérieur).<br/>- Diamètre minimal de perçage $d \ge 2.0\text{ mm}$ ($L/d \le 8.0$).<br/>- Zéro contre-dépouille accidentelle selon l'axe Z d'usinage. |
 | **Porte L2-Z**| **Robustesse Paramétrique** | Perturbation de $\pm 10\%$ de chaque paramètre du script : 100% des variantes doivent valider L0. |
 | **Porte L2-E**| **Isolation Géométrique** | En scène multi-corps : conservation stricte du volume et centre de masse des autres pièces ; clash $V_{\text{inter}} < 10^{-6}\text{ m}^3$. |
+| **Porte L3**  | **Résistance Mécanique FEA** | Calcul FEA automatique (Gmsh C3D10 + CalculiX `ccx`) : validation si $\sigma_{\max} \le \frac{R_e}{s}$ (avec coefficient de sécurité $s \ge 1.5$). |
 
 ---
 
@@ -415,7 +416,7 @@ Mono est distribué sous licence permissive libre (**Apache-2.0 / MIT**). Afin d
 
 ## 10. Validation de la Suite de Tests & Couverture
 
-La qualité mathématique et logicielle de l'ensemble de la plateforme est validée par une suite de **99 tests automatisés** exécutés nativement :
+La qualité mathématique et logicielle de l'ensemble de la plateforme est validée par une suite de **103 tests automatisés** exécutés nativement :
 
 ```bash
 uv run pytest --cov=src/mono --cov-report=term-missing
@@ -434,13 +435,13 @@ uv run pytest --cov=src/mono --cov-report=term-missing
 | `src/mono/core/document.py`               | 103 | **90%** | Graphe de scène sémantique |
 | `src/mono/providers/biomolecule_gemmi.py` | 581 | **89%** | Cristallographie PDB & BinaryCIF |
 | `src/mono/core/command.py`                | 103 | **88%** | Transactions Undo/Redo zstd < 5 ms |
+| `src/mono/agent/cadengbench_gates.py`     | 322 | **88%** | Portes déterministes L0, L1, L2-Z, L2-E, L3 FEA |
 | `src/mono/providers/cfd_openfoam.py`      | 193 | **88%** | Préparation de cas CFD OpenFOAM |
 | `src/mono/providers/fea_gmsh.py`          | 404 | **87%** | Maillage Gmsh C3D10 & CalculiX |
-| `src/mono/agent/mac_orchestrator.py`      | 132 | **87%** | Boucle cybernétique multi-agents |
-| `src/mono/agent/cadengbench_gates.py`     | 263 | **86%** | Portes déterministes L0, L1, L2-Z, L2-E |
+| `src/mono/agent/mac_orchestrator.py`      | 143 | **85%** | Boucle cybernétique multi-agents |
 | `src/mono/core/archive_mono.py`           | 202 | **86%** | Sérialisation conteneur `.mono` |
 | `src/mono/sketch/planegcs_solver.py`      | 276 | **82%** | Solveur d'esquisse 2D contrainte |
-| **TOTAL GLOBAL**                          | **5603** | **83%** | **99/99 tests passés (100% succès)** |
+| **TOTAL GLOBAL**                          | **5678** | **83%** | **103/103 tests passés (100% succès)** |
 
 ---
 
