@@ -257,6 +257,92 @@ def get_bim_floorplan(entity_id: str | None = None, elevation_z: float = 1.2) ->
     return Response(content=floorplan.svg_content, media_type="image/svg+xml")
 
 
+@app.get("/api/bim/dxf")
+def get_bim_floorplan_dxf(entity_id: str | None = None, elevation_z: float = 1.2) -> Response:
+    """Télécharge le plan 2D de coupe d'étage au format vectoriel CAD DXF standard."""
+    target_provider = None
+    if entity_id and entity_id in state.doc.entities:
+        rec = state.doc.entities[entity_id]
+        if isinstance(rec.provider, BimIfcProvider):
+            target_provider = rec.provider
+    else:
+        for rec in state.doc.entities.values():
+            if isinstance(rec.provider, BimIfcProvider):
+                target_provider = rec.provider
+                break
+
+    if target_provider is None:
+        raise HTTPException(status_code=404, detail="Aucun modèle BIM IFC trouvé dans la scène.")
+
+    floorplan = target_provider.generate_2d_floorplan(elevation_z=elevation_z)
+    return Response(
+        content=floorplan.dxf_content,
+        media_type="application/dxf",
+        headers={"Content-Disposition": f'attachment; filename="{target_provider.entity_id}_floorplan_z{elevation_z:.2f}.dxf"'},
+    )
+
+
+@app.get("/api/bim/ifc")
+def get_bim_ifc(entity_id: str | None = None) -> Response:
+    """Exporte et télécharge le modèle architectural au format standard ISO 10303-21 IFC4."""
+    target_provider = None
+    if entity_id and entity_id in state.doc.entities:
+        rec = state.doc.entities[entity_id]
+        if isinstance(rec.provider, BimIfcProvider):
+            target_provider = rec.provider
+    else:
+        for rec in state.doc.entities.values():
+            if isinstance(rec.provider, BimIfcProvider):
+                target_provider = rec.provider
+                break
+
+    if target_provider is None:
+        raise HTTPException(status_code=404, detail="Aucun modèle BIM IFC trouvé dans la scène.")
+
+    ifc_text = target_provider.to_ifc_string()
+    return Response(
+        content=ifc_text,
+        media_type="application/x-step",
+        headers={"Content-Disposition": f'attachment; filename="{target_provider.entity_id}.ifc"'},
+    )
+
+
+class BimImportRequest(BaseModel):
+    entity_id: str = "imported_building"
+    ifc_source: str
+    project_name: str = "Imported IFC Project"
+
+
+@app.post("/api/bim/import")
+def import_bim_ifc(req: BimImportRequest) -> dict[str, object]:
+    """Importe un fichier ou texte IFC4 standard dans la scène."""
+    provider = BimIfcProvider(
+        entity_id=req.entity_id,
+        ifc_source=req.ifc_source,
+        project_name=req.project_name,
+    )
+    report = provider.introspect()
+    state.doc.entities[req.entity_id] = EntityRecord(
+        entity_id=req.entity_id,
+        provider_name="bim_ifc",
+        scale_domain="meter",
+        provider=provider,
+        tags=["bim", "ifc4", "architecture"],
+    )
+    return {
+        "status": "success",
+        "entity_id": req.entity_id,
+        "is_valid_l0": report.is_valid_l0,
+        "storeys": report.topology_counts.get("storeys", 0),
+        "walls": report.topology_counts.get("walls", 0),
+        "columns": report.topology_counts.get("columns", 0),
+        "slabs": report.topology_counts.get("slabs", 0),
+        "doors": report.topology_counts.get("doors", 0),
+        "windows": report.topology_counts.get("windows", 0),
+        "volume_m3": report.volume_m3,
+    }
+
+
 @app.post("/api/textile/create")
 async def create_textile(req: TextileCreateRequest) -> dict[str, object]:
     """Instancie un textile ou une membrane souple simulée par GPU XPBD."""

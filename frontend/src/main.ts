@@ -496,6 +496,49 @@ class MonoApp {
         reader.readAsDataURL(file);
       });
     }
+
+    // Architecture & BIM (IFC4 & HLR 2D)
+    const btnBimFloorplanPreview = document.getElementById('btn-bim-floorplan-preview');
+    const inputBimElevation = document.getElementById('input-bim-elevation') as HTMLInputElement | null;
+    const btnBimDownloadDxf = document.getElementById('btn-bim-download-dxf');
+    const btnBimDownloadIfc = document.getElementById('btn-bim-download-ifc');
+
+    if (btnBimFloorplanPreview) {
+      btnBimFloorplanPreview.addEventListener('click', async () => {
+        const elev = inputBimElevation ? parseFloat(inputBimElevation.value) || 1.2 : 1.2;
+        btnBimFloorplanPreview.textContent = '⏳ Calcul HLR...';
+        try {
+          const resp = await fetch(`http://127.0.0.1:8000/api/bim/floorplan?elevation_z=${elev}`);
+          if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+          }
+          const svgText = await resp.text();
+          const modal = document.getElementById('techdraw-modal');
+          const container = document.getElementById('techdraw-svg-container');
+          if (modal && container) {
+            container.innerHTML = svgText;
+            modal.style.display = 'flex';
+          }
+        } catch (err) {
+          alert(`Erreur génération coupe BIM : ${err}`);
+        } finally {
+          btnBimFloorplanPreview.textContent = '👁️ Coupe HLR 2D';
+        }
+      });
+    }
+
+    if (btnBimDownloadDxf) {
+      btnBimDownloadDxf.addEventListener('click', () => {
+        const elev = inputBimElevation ? parseFloat(inputBimElevation.value) || 1.2 : 1.2;
+        window.open(`http://127.0.0.1:8000/api/bim/dxf?elevation_z=${elev}`, '_blank');
+      });
+    }
+
+    if (btnBimDownloadIfc) {
+      btnBimDownloadIfc.addEventListener('click', () => {
+        window.open('http://127.0.0.1:8000/api/bim/ifc', '_blank');
+      });
+    }
   }
 
   private playTrajectoryLoop(): void {

@@ -75,6 +75,7 @@ class BimIfcProvider(GeometryProvider):
         entity_id: str = "building_01",
         ifc_file: ifcopenshell.file | None = None,
         ifc_path: Path | None = None,
+        ifc_source: str | None = None,
         project_name: str = "Mono Architecture",
     ) -> None:
         """Initialise le modèle BIM avec hiérarchie spatiale normée buildingSMART.
@@ -83,6 +84,7 @@ class BimIfcProvider(GeometryProvider):
             entity_id: Identifiant unique de l'entité dans le document Mono.
             ifc_file: Instance existante ifcopenshell.file (prioritaire si fournie).
             ifc_path: Chemin alternatif vers un fichier .ifc existant à charger.
+            ifc_source: Chaîne de caractères brute au format ISO 10303-21 IFC4.
             project_name: Nom du projet architectural IFC4.
         """
         self._entity_id: str = entity_id
@@ -91,6 +93,9 @@ class BimIfcProvider(GeometryProvider):
 
         if ifc_file is not None:
             self._model = ifc_file
+            self._init_existing_hierarchy()
+        elif ifc_source is not None and ifc_source.strip():
+            self._model = ifcopenshell.file.from_string(ifc_source)
             self._init_existing_hierarchy()
         elif ifc_path is not None and ifc_path.exists():
             self._model = ifcopenshell.open(str(ifc_path))
@@ -105,6 +110,24 @@ class BimIfcProvider(GeometryProvider):
     @property
     def model(self) -> ifcopenshell.file:
         return self._model
+
+    def to_ifc_string(self) -> str:
+        """Retourne le contenu intégral du modèle IFC4 sous forme de texte ISO 10303-21."""
+        return self._model.to_string()
+
+    def write(self, output_path: Path | str) -> Path:
+        """Sauvegarde le modèle architectural IFC4 sur disque.
+
+        Args:
+            output_path: Chemin cible du fichier `.ifc`.
+
+        Returns:
+            Path: Le chemin absolu du fichier écrit.
+        """
+        p = Path(output_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        self._model.write(str(p))
+        return p
 
     def _init_new_ifc4_model(self, project_name: str) -> None:
         """Initialise un fichier IFC4 vierge avec le contexte géométrique et l'arbre spatial de base."""
@@ -425,6 +448,72 @@ class BimIfcProvider(GeometryProvider):
 
         return str(window.GlobalId)
 
+    def add_column(
+        self,
+        storey_name: str,
+        name: str,
+        width: float = 0.3,
+        depth: float = 0.3,
+        height: float = 2.8,
+        x: float = 0.0,
+        y: float = 0.0,
+        z: float = 0.0,
+        is_load_bearing: bool = True,
+        fire_rating: str = "REI 90",
+    ) -> str:
+        """Ajoute un poteau porteur paramétrique (IfcColumn) relié à son étage.
+
+        Args:
+            storey_name: Nom de l'étage de référence.
+            name: Nom d'usage du poteau.
+            width: Largeur de section en X (mètres).
+            depth: Profondeur de section en Y (mètres).
+            height: Hauteur en Z (mètres).
+            x, y, z: Coordonnées d'origine de la base du poteau en mètres.
+            is_load_bearing: True si le poteau reprend des charges structurelles.
+            fire_rating: Classe de résistance au feu normée (ex: 'REI 90').
+
+        Returns:
+            str: GlobalId unique du poteau créé.
+        """
+        if storey_name not in self._storeys:
+            raise KeyError(f"Étage '{storey_name}' introuvable.")
+
+        storey = self._storeys[storey_name]
+        col = ifcopenshell.api.run(
+            "root.create_entity", self._model, ifc_class="IfcColumn", name=name
+        )
+
+        ifcopenshell.api.run(
+            "spatial.assign_container", self._model, products=[col], relating_structure=storey
+        )
+
+        mat = np.eye(4, dtype=np.float64)
+        mat[0, 3] = x
+        mat[1, 3] = y
+        mat[2, 3] = z
+        ifcopenshell.api.geometry.edit_object_placement(self._model, product=col, matrix=mat)
+
+        pset = ifcopenshell.api.run(
+            "pset.add_pset", self._model, product=col, name="Pset_ColumnCommon"
+        )
+        ifcopenshell.api.run(
+            "pset.edit_pset",
+            self._model,
+            pset=pset,
+            properties={
+                "LoadBearing": is_load_bearing,
+                "IsExternal": False,
+                "FireRating": fire_rating,
+            },
+        )
+
+        solid = bd.Box(width, depth, height)
+        loc = bd.Location((x + width * 0.5, y + depth * 0.5, z + height * 0.5))
+        self._solids[str(col.GlobalId)] = solid.locate(loc)
+
+        return str(col.GlobalId)
+
     def query_spatial(
         self, ifc_class: str | None = None, storey_name: str | None = None
     ) -> list[IFCElementInfo]:
@@ -572,7 +661,20 @@ class BimIfcProvider(GeometryProvider):
         w_m = max(max_x - min_x, 1.0)
         h_m = max(max_y - min_y, 1.0)
 
-        # 4. Génération du fichier SVG
+        # Calcul de la boîte englobante des éléments construits pour les cotations
+        built_pts = [p for s in (cut_segments if cut_segments else visible_segments) for p in s]
+        if built_pts:
+            b_min_x = min(p[0] for p in built_pts)
+            b_max_x = max(p[0] for p in built_pts)
+            b_min_y = min(p[1] for p in built_pts)
+            b_max_y = max(p[1] for p in built_pts)
+            b_len_x = b_max_x - b_min_x
+            b_len_y = b_max_y - b_min_y
+        else:
+            b_min_x, b_max_x, b_min_y, b_max_y = 0.0, 1.0, 0.0, 1.0
+            b_len_x, b_len_y = 1.0, 1.0
+
+        # 4. Génération du fichier SVG conforme aux normes d'architecture
         scale_px = 100.0  # 100 px par mètre
         svg_w = int(w_m * scale_px)
         svg_h = int(h_m * scale_px)
@@ -598,15 +700,59 @@ class BimIfcProvider(GeometryProvider):
             (x1, y1), (x2, y2) = s
             svg_lines.append(f'    <line x1="{x1:.4f}" y1="{-y1:.4f}" x2="{x2:.4f}" y2="{-y2:.4f}" />')
 
+        svg_lines.append('  </g>')
+
+        # Lignes de cotation architecturale automatique (A-DIMS)
+        dim_y = b_min_y - 0.6
+        dim_x = b_min_x - 0.6
+        svg_lines.extend([
+            f'  <!-- Couche Cotations d\'encombrement architectural (A-DIMS) -->',
+            f'  <g id="A-DIMS" stroke="#0f172a" stroke-width="0.02" stroke-linecap="square">',
+            f'    <!-- Ligne de cote X globale -->',
+            f'    <line x1="{b_min_x:.4f}" y1="{-dim_y:.4f}" x2="{b_max_x:.4f}" y2="{-dim_y:.4f}" />',
+            f'    <line x1="{b_min_x:.4f}" y1="{-b_min_y:.4f}" x2="{b_min_x:.4f}" y2="{-(dim_y - 0.15):.4f}" />',
+            f'    <line x1="{b_max_x:.4f}" y1="{-b_min_y:.4f}" x2="{b_max_x:.4f}" y2="{-(dim_y - 0.15):.4f}" />',
+            f'    <line x1="{b_min_x - 0.08:.4f}" y1="{-(dim_y - 0.08):.4f}" x2="{b_min_x + 0.08:.4f}" y2="{-(dim_y + 0.08):.4f}" stroke-width="0.03" />',
+            f'    <line x1="{b_max_x - 0.08:.4f}" y1="{-(dim_y - 0.08):.4f}" x2="{b_max_x + 0.08:.4f}" y2="{-(dim_y + 0.08):.4f}" stroke-width="0.03" />',
+            f'    <!-- Ligne de cote Y globale -->',
+            f'    <line x1="{dim_x:.4f}" y1="{-b_min_y:.4f}" x2="{dim_x:.4f}" y2="{-b_max_y:.4f}" />',
+            f'    <line x1="{b_min_x:.4f}" y1="{-b_min_y:.4f}" x2="{dim_x - 0.15:.4f}" y2="{-b_min_y:.4f}" />',
+            f'    <line x1="{b_min_x:.4f}" y1="{-b_max_y:.4f}" x2="{dim_x - 0.15:.4f}" y2="{-b_max_y:.4f}" />',
+            f'    <line x1="{dim_x - 0.08:.4f}" y1="{-(b_min_y - 0.08):.4f}" x2="{dim_x + 0.08:.4f}" y2="{-(b_min_y + 0.08):.4f}" stroke-width="0.03" />',
+            f'    <line x1="{dim_x - 0.08:.4f}" y1="{-(b_max_y - 0.08):.4f}" x2="{dim_x + 0.08:.4f}" y2="{-(b_max_y + 0.08):.4f}" stroke-width="0.03" />',
+            f'  </g>',
+            f'  <!-- Textes de cotation -->',
+            f'  <g id="A-DIMS-TEXT" font-family="sans-serif" font-size="0.22" font-weight="bold" fill="#0f172a" text-anchor="middle">',
+            f'    <text x="{(b_min_x + b_max_x) * 0.5:.3f}" y="{-(dim_y - 0.18):.3f}">{b_len_x:.2f} m</text>',
+            f'    <text x="{dim_x - 0.18:.3f}" y="{-(b_min_y + b_max_y) * 0.5:.3f}" transform="rotate(-90 {dim_x - 0.18:.3f} {-(b_min_y + b_max_y) * 0.5:.3f})">{b_len_y:.2f} m</text>',
+            f'  </g>',
+        ])
+
+        # Symbole d'orientation Nord (Rosace / Flèche)
+        north_cx = max_x - 0.8
+        north_cy = max_y - 0.8
+        svg_lines.extend([
+            f'  <!-- Symbole Orientation Nord (A-NORTH) -->',
+            f'  <g id="A-NORTH">',
+            f'    <circle cx="{north_cx:.3f}" cy="{-north_cy:.3f}" r="0.32" fill="none" stroke="#0f172a" stroke-width="0.02" />',
+            f'    <polygon points="{north_cx:.3f},{-north_cy - 0.28:.3f} {north_cx - 0.09:.3f},{-north_cy + 0.12:.3f} {north_cx:.3f},{-north_cy:.3f}" fill="#0f172a" />',
+            f'    <polygon points="{north_cx:.3f},{-north_cy - 0.28:.3f} {north_cx + 0.09:.3f},{-north_cy + 0.12:.3f} {north_cx:.3f},{-north_cy:.3f}" fill="none" stroke="#0f172a" stroke-width="0.02" />',
+            f'    <text x="{north_cx:.3f}" y="{-north_cy - 0.35:.3f}" font-family="sans-serif" font-size="0.22" font-weight="bold" text-anchor="middle" fill="#0f172a">N</text>',
+            f'  </g>',
+        ])
+
         # Annotation de titre du plan d'étage
         svg_lines.extend([
+            f'  <!-- Titre et cartouche d\'étage -->',
+            f'  <g id="A-TITLE">',
+            f'    <text x="{min_x + 0.5:.3f}" y="{-max_y + 0.6:.3f}" font-family="sans-serif" font-size="0.4" font-weight="bold" fill="#0f172a">PLAN DE COUPE D\'ÉTAGE (Z = +{elevation_z:.2f} m)</text>',
+            f'    <text x="{min_x + 0.5:.3f}" y="{-max_y + 0.95:.3f}" font-family="sans-serif" font-size="0.2" fill="#64748b">Standard IFC4 ISO 16739 • Algorithme OpenCASCADE HLR</text>',
             f'  </g>',
-            f'  <text x="{min_x + 0.5:.3f}" y="{-max_y + 0.6:.3f}" font-family="sans-serif" font-size="0.4" font-weight="bold" fill="#0f172a">PLAN DE COUPE D\'ÉTAGE (Z = +{elevation_z:.2f} m)</text>',
             f'</svg>',
         ])
         svg_str = "\n".join(svg_lines)
 
-        # 5. Génération DXF R12 textuel minimaliste
+        # 5. Génération DXF R12 textuel avec calques normalisés (A-WALL-CUTT, A-WALL-PROJ, A-DIMS)
         dxf_lines: list[str] = [
             "0\nSECTION\n2\nENTITIES",
         ]
@@ -624,6 +770,15 @@ class BimIfcProvider(GeometryProvider):
                 f"10\n{x1:.4f}\n20\n{y1:.4f}\n30\n0.0",
                 f"11\n{x2:.4f}\n21\n{y2:.4f}\n31\n0.0",
             ])
+        # Ajouter les cotes au DXF
+        dxf_lines.extend([
+            "0\nLINE\n8\nA-DIMS",
+            f"10\n{b_min_x:.4f}\n20\n{dim_y:.4f}\n30\n0.0",
+            f"11\n{b_max_x:.4f}\n21\n{dim_y:.4f}\n31\n0.0",
+            "0\nLINE\n8\nA-DIMS",
+            f"10\n{dim_x:.4f}\n20\n{b_min_y:.4f}\n30\n0.0",
+            f"11\n{dim_x:.4f}\n21\n{b_max_y:.4f}\n31\n0.0",
+        ])
         dxf_lines.extend(["0\nENDSEC\n0\nEOF"])
         dxf_str = "\n".join(dxf_lines)
 
@@ -759,6 +914,7 @@ class BimIfcProvider(GeometryProvider):
         counts = {
             "storeys": len(self._model.by_type("IfcBuildingStorey")),
             "walls": len(self._model.by_type("IfcWall")),
+            "columns": len(self._model.by_type("IfcColumn")),
             "slabs": len(self._model.by_type("IfcSlab")),
             "doors": len(self._model.by_type("IfcDoor")),
             "windows": len(self._model.by_type("IfcWindow")),
@@ -780,6 +936,8 @@ class BimIfcProvider(GeometryProvider):
         """Évalue une requête spatiale ou sémantique."""
         if selector_expr.startswith("walls"):
             return [elem.id() for elem in self._model.by_type("IfcWall")]
+        elif selector_expr.startswith("columns"):
+            return [elem.id() for elem in self._model.by_type("IfcColumn")]
         elif selector_expr.startswith("slabs"):
             return [elem.id() for elem in self._model.by_type("IfcSlab")]
         elif selector_expr.startswith("storeys"):

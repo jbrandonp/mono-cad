@@ -245,6 +245,41 @@
           </div>
         </section>
 
+        <!-- Section Architecture & BIM (IFC4 & Coupes HLR) -->
+        <section class="panel-section bim-section">
+          <h3>🏛️ Architecture & BIM (IFC4)</h3>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <label for="input-bim-elevation" style="font-size: 11px; color: #94a3b8; flex: 1;">Élévation coupe Z (m) :</label>
+              <input id="input-bim-elevation" type="number" step="0.1" value="1.2" style="width: 70px; padding: 4px; background: #1e293b; color: #fff; border: 1px solid #334155; border-radius: 4px; font-size: 11px; text-align: center;">
+            </div>
+
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-bim-floorplan-preview" class="btn btn-primary" style="flex: 1; background: linear-gradient(135deg, #0ea5e9, #0284c7);">
+                👁️ Coupe HLR 2D
+              </button>
+            </div>
+
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-bim-download-dxf" class="btn btn-secondary btn-sm" style="flex: 1;">
+                📐 DXF 2D
+              </button>
+              <button id="btn-bim-download-ifc" class="btn btn-secondary btn-sm" style="flex: 1;">
+                🏢 Modèle IFC4
+              </button>
+            </div>
+
+            <div class="stat-row">
+              <span class="stat-label">Segments Coupe/Vue :</span>
+              <span id="stat-bim-segments" class="stat-value highlight">-- / --</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Composants IFC :</span>
+              <span id="stat-bim-elements" class="stat-value">--</span>
+            </div>
+          </div>
+        </section>
+
         <!-- Section Actions Rapides -->
         <section class="panel-section actions-section">
           <button id="btn-fea-simulate" class="btn btn-primary" style="margin-bottom: 8px;">
