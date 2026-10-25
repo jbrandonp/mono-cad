@@ -11,8 +11,9 @@ class BinaryMeshPayload:
     """Charge utile binaire d'un maillage géométrique 3D pour transfert zero-copy.
 
     Regroupe les coordonnées de sommets (float32), les normales (float32),
-    les indices des triangles (uint32) et les identifiants de faces topologiques
-    (uint32) dans des tableaux contigus alignés en mémoire.
+    les indices des triangles (uint32), les identifiants de faces topologiques
+    (uint32) et optionnellement un champ scalaire continu (ex: contraintes de von Mises)
+    dans des tableaux contigus alignés en mémoire.
     """
 
     entity_id: str
@@ -20,15 +21,17 @@ class BinaryMeshPayload:
     normals: npt.NDArray[np.float32]  # Vecteurs normaux unitaires (N, 3)
     indices: npt.NDArray[np.uint32]  # Indices de triangulation (M, 3) ou (M*3,)
     face_ids: npt.NDArray[np.uint32]  # Identifiant topologique de face pour chaque triangle (M,)
+    scalar_field: npt.NDArray[np.float32] | None = None  # Champ scalaire par sommet (N,) ex: von Mises normalisé
 
     def to_bytes(self) -> bytes:
-        """Sérialise les quatre tableaux contigus en un unique tampon binaire.
+        """Sérialise les tableaux contigus en un unique tampon binaire.
 
         Ordre d'alignement binaire (4 octets par élément) :
         1. vertices (float32)
         2. normals (float32)
         3. indices (uint32)
         4. face_ids (uint32)
+        5. scalar_field (float32, optionnel)
 
         Returns:
             bytes: Flux binaire contigu directement projetable dans Three.js.
@@ -37,7 +40,12 @@ class BinaryMeshPayload:
         n_bytes = np.ascontiguousarray(self.normals, dtype=np.float32).tobytes()
         i_bytes = np.ascontiguousarray(self.indices, dtype=np.uint32).tobytes()
         f_bytes = np.ascontiguousarray(self.face_ids, dtype=np.uint32).tobytes()
-        return v_bytes + n_bytes + i_bytes + f_bytes
+        s_bytes = (
+            np.ascontiguousarray(self.scalar_field, dtype=np.float32).tobytes()
+            if self.scalar_field is not None
+            else b""
+        )
+        return v_bytes + n_bytes + i_bytes + f_bytes + s_bytes
 
     @classmethod
     def from_bytes(
@@ -82,6 +90,11 @@ class BinaryMeshPayload:
         offset += i_size
 
         face_ids = np.frombuffer(raw_bytes, dtype=np.uint32, count=f_len, offset=offset)
+        offset += f_len * 4
+
+        scalar_field: npt.NDArray[np.float32] | None = None
+        if len(raw_bytes) >= offset + vertex_count * 4:
+            scalar_field = np.frombuffer(raw_bytes, dtype=np.float32, count=vertex_count, offset=offset)
 
         return cls(
             entity_id=entity_id,
@@ -89,6 +102,7 @@ class BinaryMeshPayload:
             normals=normals,
             indices=indices,
             face_ids=face_ids,
+            scalar_field=scalar_field,
         )
 
 

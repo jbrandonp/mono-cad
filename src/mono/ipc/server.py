@@ -45,6 +45,23 @@ class AgentRunRequest(BaseModel):
     max_iterations: int = 8
 
 
+class FEASimulateRequest(BaseModel):
+    """Schéma de requête pour l'exécution d'une simulation éléments finis FEA."""
+
+    entity_id: str
+    material_name: str = "ALUMINUM_6061_T6"
+    young_modulus_gpa: float = 70.0
+    poisson_ratio: float = 0.33
+    yield_strength_mpa: float = 275.0
+    force_x_n: float = 0.0
+    force_y_n: float = 0.0
+    force_z_n: float = -2500.0
+    fixed_predicate: str = "min_z"
+    load_predicate: str = "max_z"
+    element_size_max: float = 6.0
+    target_safety_factor: float = 1.5
+
+
 class ServerState:
     """Conteneur d'état global du serveur backend local."""
 
@@ -223,6 +240,57 @@ async def run_agent(req: AgentRunRequest) -> dict[str, object]:
     return result.to_dict()
 
 
+@app.post("/api/fea/simulate")
+async def simulate_fea(req: FEASimulateRequest) -> dict[str, object]:
+    """Lance une simulation structurelle FEA (Gmsh C3D10 + CalculiX ccx) sur une entité."""
+    if req.entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail=f"Entité '{req.entity_id}' introuvable.")
+
+    from mono.providers.fea_gmsh import FEAMaterial, FEABoundaryCondition, FEAResult
+
+    mat = FEAMaterial(
+        name=req.material_name,
+        young_modulus_gpa=req.young_modulus_gpa,
+        poisson_ratio=req.poisson_ratio,
+        yield_strength_mpa=req.yield_strength_mpa,
+    )
+    bc = FEABoundaryCondition(
+        fixed_predicate=req.fixed_predicate,
+        load_predicate=req.load_predicate,
+        applied_force_n=(req.force_x_n, req.force_y_n, req.force_z_n),
+    )
+
+    try:
+        raw_res = state.doc.run_fea_simulation(
+            entity_id=req.entity_id,
+            material=mat,
+            boundary=bc,
+            element_size_max=req.element_size_max,
+            target_safety_factor=req.target_safety_factor,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Échec simulation FEA : {exc}") from exc
+
+    fea_res = raw_res if isinstance(raw_res, FEAResult) else None
+    assert fea_res is not None
+
+    # Diffusion immédiate du maillage avec le champ scalaire de Von Mises sur le WebSocket
+    payloads = state.doc.collect_dirty_binary_payloads()
+    for payload in payloads:
+        await state.ipc.broadcast_binary_mesh(payload)
+
+    return {
+        "entity_id": req.entity_id,
+        "max_von_mises_mpa": fea_res.max_von_mises_mpa,
+        "mean_von_mises_mpa": fea_res.mean_von_mises_mpa,
+        "max_displacement_mm": fea_res.max_displacement_mm,
+        "safety_factor": fea_res.safety_factor,
+        "is_structurally_safe": fea_res.is_structurally_safe,
+        "num_nodes": fea_res.num_nodes,
+        "num_elements": fea_res.num_elements,
+    }
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """Point de terminaison WebSocket pour la communication réactive temps réel avec Tauri/Three.js."""
@@ -332,6 +400,50 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "type": "agent_result",
                     "result": agent_res.to_dict(),
                 })
+
+            elif msg_type == "run_fea":
+                eid = str(msg.get("entity_id", "part_001"))
+                if eid in state.doc.entities:
+                    from mono.providers.fea_gmsh import FEAMaterial, FEABoundaryCondition, FEAResult
+                    mat = FEAMaterial(
+                        young_modulus_gpa=float(msg.get("young_modulus_gpa", 70.0)),
+                        yield_strength_mpa=float(msg.get("yield_strength_mpa", 275.0)),
+                    )
+                    bc = FEABoundaryCondition(
+                        applied_force_n=(
+                            float(msg.get("force_x", 0.0)),
+                            float(msg.get("force_y", 0.0)),
+                            float(msg.get("force_z", -2500.0)),
+                        )
+                    )
+                    try:
+                        raw_fres = state.doc.run_fea_simulation(
+                            entity_id=eid,
+                            material=mat,
+                            boundary=bc,
+                            element_size_max=float(msg.get("element_size_max", 6.0)),
+                        )
+                        f_res = raw_fres if isinstance(raw_fres, FEAResult) else None
+                        assert f_res is not None
+
+                        # Diffusion des nouveaux maillages binaires avec champ scalaire
+                        dirty_payloads = state.doc.collect_dirty_binary_payloads()
+                        for payload in dirty_payloads:
+                            await state.ipc.broadcast_binary_mesh(payload)
+
+                        await state.ipc.send_json(websocket, {
+                            "type": "fea_completed",
+                            "entity_id": eid,
+                            "max_von_mises_mpa": f_res.max_von_mises_mpa,
+                            "max_displacement_mm": f_res.max_displacement_mm,
+                            "safety_factor": f_res.safety_factor,
+                            "is_structurally_safe": f_res.is_structurally_safe,
+                        })
+                    except Exception as err:
+                        await state.ipc.send_json(websocket, {
+                            "type": "fea_failed",
+                            "error": str(err),
+                        })
 
     except WebSocketDisconnect:
         state.ipc.disconnect(websocket)

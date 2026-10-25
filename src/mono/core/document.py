@@ -230,6 +230,62 @@ class MonoDocument:
                 record.is_dirty = False
         return payloads
 
+    def run_fea_simulation(
+        self,
+        entity_id: str,
+        material: object | None = None,
+        boundary: object | None = None,
+        element_size_max: float = 6.0,
+        target_safety_factor: float = 1.5,
+    ) -> object:
+        """Exécute une analyse éléments finis (FEA) sur une entité existante.
+
+        Remplace le provider de l'entité par un FeaGmshProvider enrichi du champ
+        scalaire de Von Mises et marque l'entité comme modifiée (is_dirty = True).
+
+        Args:
+            entity_id: Identifiant de l'entité à soumettre à l'analyse FEA.
+            material: Propriétés élastiques du matériau (FEAMaterial).
+            boundary: Conditions aux limites d'encastrement et d'effort (FEABoundaryCondition).
+            element_size_max: Taille maximale des tétraèdres C3D10 en mm.
+            target_safety_factor: Coefficient de sécurité minimal requis.
+
+        Returns:
+            FEAResult: Données complètes de la simulation (contraintes, déplacements, Sf).
+        """
+        if entity_id not in self.entities:
+            raise KeyError(f"Entité géométrique '{entity_id}' introuvable dans le document.")
+
+        rec = self.entities[entity_id]
+        from mono.providers.brep_build123d import BRepBuild123dProvider
+        from mono.providers.fea_gmsh import FeaGmshProvider, FEAMaterial, FEABoundaryCondition
+
+        part = None
+        if isinstance(rec.provider, BRepBuild123dProvider):
+            part = rec.provider.part
+        elif isinstance(rec.provider, FeaGmshProvider):
+            part = rec.provider._part
+
+        mat = material if isinstance(material, FEAMaterial) else FEAMaterial()
+        bc = boundary if isinstance(boundary, FEABoundaryCondition) else FEABoundaryCondition()
+
+        fea_provider = FeaGmshProvider(
+            entity_id=entity_id,
+            part=part,
+            material=mat,
+            boundary=bc,
+            element_size_max=element_size_max,
+            target_safety_factor=target_safety_factor,
+        )
+
+        result = fea_provider.solve()
+
+        rec.provider = fea_provider
+        rec.provider_name = "fea_gmsh"
+        rec.is_dirty = True
+
+        return result
+
     def to_semantic_summary(self) -> dict[str, object]:
         """Génère un résumé textuel compact pour l'injection dans le contexte des LLM/VLM.
 
