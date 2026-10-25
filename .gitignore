@@ -16,3 +16,11 @@ src-tauri/target/
 frontend/dist/
 frontend/node_modules/
 .agents/
+bin/workers/
+*.exe
+*.dll
+*.frd
+*.dat
+*.cvg
+*.sta
+*.12d
