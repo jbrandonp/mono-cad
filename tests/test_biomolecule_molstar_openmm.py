@@ -77,6 +77,14 @@ def test_binary_cif_serialization_and_structure() -> None:
     for expected in ("id", "type_symbol", "label_atom_id", "label_comp_id", "Cartn_x", "Cartn_y", "Cartn_z"):
         assert expected in col_names
 
+    # Vérification avec 1CRN pour les catégories _cell et _symmetry
+    p_1crn = BiomoleculeProvider(pdb_code="1CRN")
+    bcif_1crn = p_1crn.serialize_binary_cif()
+    unpacked_1crn = msgpack.unpackb(bcif_1crn, raw=False)
+    cats_1crn = [c["name"] for c in unpacked_1crn["dataBlocks"][0]["categories"]]
+    assert "_cell" in cats_1crn
+    assert "_symmetry" in cats_1crn
+
 
 def test_mmcif_text_serialization() -> None:
     """Vérifie la sérialisation mmCIF textuelle standard."""
@@ -211,3 +219,32 @@ async def test_biomolecule_rest_api_lifecycle() -> None:
         assert "potential_energy_kj_mol" in frame_data
         assert "rmsd_angstrom" in frame_data
         assert len(frame_data["positions"]) == 21
+
+        # 7. Export standard PDB text
+        pdb_resp = await client.get("/api/biomolecule/pdb?entity_id=test_protein_001")
+        assert pdb_resp.status_code == 200
+        assert "ATOM" in pdb_resp.text
+        assert "ALA" in pdb_resp.text
+
+        # 8. Données cristallographiques
+        crypto_resp = await client.get("/api/biomolecule/crystallography?entity_id=test_protein_001")
+        assert crypto_resp.status_code == 200
+        crypto_data = crypto_resp.json()
+        assert "unit_cell" in crypto_data
+        assert "spacegroup" in crypto_data
+
+        # 9. Chargement de 1CRN par code PDB et mode ribbon
+        load_1crn = await client.post(
+            "/api/biomolecule/load",
+            json={
+                "entity_id": "crambin_1crn",
+                "pdb_code": "1CRN",
+                "mode": "ribbon",
+            },
+        )
+        assert load_1crn.status_code == 200
+        c1_data = load_1crn.json()
+        assert c1_data["status"] == "loaded"
+        assert c1_data["sequence"].startswith("TTCC")
+        assert c1_data["crystallography"]["spacegroup"] == "P 1 21 1"
+        assert c1_data["crystallography"]["resolution_angstrom"] == 1.5

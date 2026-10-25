@@ -124,9 +124,10 @@ class BiomoleculeLoadRequest(BaseModel):
     """Schéma de requête pour le chargement d'une structure protéique ou acide nucléique."""
 
     entity_id: str = "protein_001"
+    pdb_code: str | None = None
     pdb_content: str | None = None
     pdb_path: str | None = None
-    mode: str = "ball_and_stick"
+    mode: str = "ribbon"
 
 
 class BiomoleculeSimulateRequest(BaseModel):
@@ -523,17 +524,19 @@ async def get_textile_metrics(entity_id: str = "textile_001") -> dict[str, objec
 def load_biomolecule(req: BiomoleculeLoadRequest) -> dict[str, object]:
     """Charge une macromolécule biologique 3D (PDB / mmCIF) dans la scène."""
     mode_str: Literal["ball_and_stick", "ribbon", "spheres", "sticks"] = (
-        req.mode if req.mode in ("ball_and_stick", "ribbon", "spheres", "sticks") else "ball_and_stick"
+        req.mode if req.mode in ("ball_and_stick", "ribbon", "spheres", "sticks") else "ribbon"
     )
     provider = BiomoleculeProvider(
         pdb_content=req.pdb_content,
         pdb_path=req.pdb_path,
+        pdb_code=req.pdb_code,
         mode=mode_str,
     )
     chains = provider.get_chains()
     primary_chain = chains[0] if chains else "A"
     sequence = provider.get_sequence(primary_chain)
     report = provider.introspect()
+    crypto_info = provider.get_crystallographic_info()
 
     state.doc.entities[req.entity_id] = EntityRecord(
         entity_id=req.entity_id,
@@ -548,7 +551,39 @@ def load_biomolecule(req: BiomoleculeLoadRequest) -> dict[str, object]:
         "chains": chains,
         "sequence": sequence,
         "topology": report.topology_counts,
+        "crystallography": crypto_info,
     }
+
+
+@app.get("/api/biomolecule/crystallography")
+def get_biomolecule_crystallography(entity_id: str = "protein_001") -> dict[str, object]:
+    """Renvoie les données cristallographiques de la structure (maille, groupe spatial, résolution)."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité biomoléculaire non trouvée dans la scène.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, BiomoleculeProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas une biomolécule.")
+
+    return rec.provider.get_crystallographic_info()
+
+
+@app.get("/api/biomolecule/pdb")
+def get_biomolecule_pdb(entity_id: str = "protein_001") -> Response:
+    """Exporte la structure au format PDB textuel standard."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité introuvable dans la scène.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, BiomoleculeProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas une biomolécule.")
+
+    pdb_bytes = rec.provider.serialize_native()
+    return Response(
+        content=pdb_bytes,
+        media_type="chemical/x-pdb",
+        headers={"Content-Disposition": f'attachment; filename="{entity_id}.pdb"'},
+    )
 
 
 @app.get("/api/biomolecule/ramachandran")
@@ -1435,12 +1470,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             elif msg_type == "load_biomolecule":
                 eid = str(msg.get("entity_id", "protein_001"))
-                pdb_txt = str(msg.get("pdb_content", ""))
-                mode = str(msg.get("mode", "ball_and_stick"))
+                pdb_code = str(msg.get("pdb_code", "1CRN")) if msg.get("pdb_code") else None
+                pdb_txt = str(msg.get("pdb_content", "")) if msg.get("pdb_content") else None
+                mode = str(msg.get("mode", "ribbon"))
                 mode_str: Literal["ball_and_stick", "ribbon", "spheres", "sticks"] = (
-                    mode if mode in ("ball_and_stick", "ribbon", "spheres", "sticks") else "ball_and_stick"
+                    mode if mode in ("ball_and_stick", "ribbon", "spheres", "sticks") else "ribbon"
                 )
-                provider = BiomoleculeProvider(pdb_content=pdb_txt if pdb_txt else None, mode=mode_str)
+                provider = BiomoleculeProvider(
+                    pdb_code=pdb_code if not pdb_txt else None,
+                    pdb_content=pdb_txt,
+                    mode=mode_str,
+                )
                 state.doc.entities[eid] = EntityRecord(
                     entity_id=eid,
                     provider_name="biomolecule_gemmi",
@@ -1456,6 +1496,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "entity_id": eid,
                     "chains": provider.get_chains(),
                     "sequence": provider.get_sequence(),
+                    "crystallography": provider.get_crystallographic_info(),
                 })
 
             elif msg_type == "step_biomolecule_dynamics":

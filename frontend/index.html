@@ -87,6 +87,15 @@
           <h2 class="section-title">Biologie Moléculaire (Mol* / OpenMM)</h2>
           <div class="bio-controls" style="display: flex; flex-direction: column; gap: 8px;">
             <div style="display: flex; gap: 6px;">
+              <input type="text" id="input-pdb-code" value="1CRN" placeholder="Code PDB (ex: 1CRN)" style="flex: 1; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase;" />
+              <select id="select-bio-mode" style="flex: 1.4; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px; border-radius: 4px; font-size: 11px;">
+                <option value="ribbon">Rubans (Cartoon)</option>
+                <option value="ball_and_stick">Boules & Bâtonnets</option>
+                <option value="spheres">Sphères VDW</option>
+                <option value="sticks">Bâtonnets</option>
+              </select>
+            </div>
+            <div style="display: flex; gap: 6px;">
               <button id="btn-load-protein" class="btn btn-primary" style="flex: 1; background: linear-gradient(135deg, #8b5cf6, #6d28d9);">
                 🧬 Charger Protéine
               </button>
@@ -111,7 +120,20 @@
               <div style="display: flex; gap: 6px; margin-top: 4px;">
                 <button id="btn-play-trajectory" class="btn btn-secondary btn-sm" style="flex: 1;">▶ Lecture</button>
                 <button id="btn-download-bcif" class="btn btn-secondary btn-sm" style="flex: 1;">💾 BinaryCIF</button>
+                <button id="btn-download-pdb" class="btn btn-secondary btn-sm" style="flex: 1;">💾 PDB</button>
               </div>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Groupe Spatial :</span>
+              <span id="stat-bio-spacegroup" class="stat-value highlight">P 1 21 1</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Résolution Cristallo :</span>
+              <span id="stat-bio-resolution" class="stat-value highlight">1.50 Å</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Topologie Secondaire :</span>
+              <span id="stat-bio-secondary" class="stat-value highlight">2 hel / 1 sht (3 S-S)</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Énergie Potentielle :</span>

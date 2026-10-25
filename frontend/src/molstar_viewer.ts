@@ -42,6 +42,15 @@ export class MolstarViewer {
     }
   }
 
+  public async clear(): Promise<void> {
+    if (!this.viewer) return;
+    try {
+      await this.viewer.plugin.clear();
+    } catch (err) {
+      console.warn('Erreur réinitialisation Mol*:', err);
+    }
+  }
+
   public async loadFromUrl(url: string, format: 'bcif' | 'cif' | 'pdb' = 'bcif'): Promise<void> {
     if (!this.viewer) {
       await this.init();
@@ -49,6 +58,7 @@ export class MolstarViewer {
     if (!this.viewer) return;
 
     try {
+      await this.clear();
       const isBinary = format === 'bcif';
       const trajFormat = format === 'bcif' || format === 'cif' ? 'mmcif' : 'pdb';
       await this.viewer.loadStructureFromUrl(url, trajFormat, isBinary);
@@ -64,6 +74,7 @@ export class MolstarViewer {
     if (!this.viewer) return;
 
     try {
+      await this.clear();
       await this.viewer.loadPdb(pdbContent);
     } catch (err) {
       console.error('Erreur chargement PDB Mol*:', err);

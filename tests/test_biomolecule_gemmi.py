@@ -161,3 +161,51 @@ async def test_biomolecule_api_endpoints() -> None:
         rama_data = res_rama.json()
         assert len(rama_data["ramachandran_points"]) == 2
         assert "disulfide_bridges" in rama_data
+
+
+def test_1crn_crystallographic_parsing_and_invariants() -> None:
+    """Vérifie l'analyse cristallographique de la Crambine 1CRN (maille, groupe spatial, ponts S-S)."""
+    provider = BiomoleculeProvider(pdb_code="1CRN")
+
+    assert provider.get_chains() == ["A"]
+    seq = provider.get_sequence("A")
+    assert len(seq) == 46
+    assert seq.startswith("TTCC")  # Séquence initiale de la Crambine
+
+    info = provider.get_crystallographic_info()
+    assert info["pdb_code"] == "1CRN"
+    assert info["spacegroup"] == "P 1 21 1"
+    assert info["resolution_angstrom"] == 1.5
+    cell = info["unit_cell"]
+    assert pytest.approx(cell["a"], 0.01) == 40.96
+    assert pytest.approx(cell["b"], 0.01) == 18.65
+    assert pytest.approx(cell["c"], 0.01) == 22.52
+    assert pytest.approx(cell["beta"], 0.01) == 90.77
+
+    sec = info["secondary_structure"]
+    assert sec["helices_count"] == 2
+    assert sec["sheets_count"] == 1
+    assert info["disulfide_bridges_count"] == 3
+
+    # Vérification des 3 ponts disulfures stéréochimiques
+    bridges = provider.find_disulfide_bridges(cutoff_angstrom=2.5)
+    assert len(bridges) == 3
+    bridge_pairs = {(b.res1_num, b.res2_num) for b in bridges}
+    assert (3, 40) in bridge_pairs
+    assert (4, 32) in bridge_pairs
+    assert (16, 26) in bridge_pairs
+
+
+def test_ribbon_mode_tessellation() -> None:
+    """Vérifie la génération géométrique continue du ruban spline C-alpha et son champ scalaire."""
+    provider = BiomoleculeProvider(pdb_code="1CRN", mode="ribbon")
+    payload = provider.tessellate_binary()
+
+    assert payload.entity_id == "biomolecule_model"
+    assert len(payload.vertices) > 0
+    assert len(payload.indices) > 0
+    assert payload.normals.shape == payload.vertices.shape
+    assert payload.scalar_field is not None
+    assert len(payload.scalar_field) == len(payload.vertices)
+    assert 0.0 <= float(np.min(payload.scalar_field))
+    assert float(np.max(payload.scalar_field)) <= 1.0

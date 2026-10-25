@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+from pathlib import Path
 from typing import List, Literal, Tuple
+import urllib.request
 import gemmi
 import numpy as np
 import numpy.typing as npt
@@ -165,6 +167,130 @@ _SPHERE_VERTS, _SPHERE_INDICES = _create_unit_sphere(stacks=6, slices=8)
 _CYL_VERTS, _CYL_INDICES = _create_unit_cylinder(segments=6)
 
 
+def _generate_ribbon_mesh(
+    points: list[npt.NDArray[np.float32]],
+    b_factors: list[float],
+    scale_to_mm: float = 1.0,
+    n_sub: int = 4,
+    rx_angstrom: float = 0.60,
+    ry_angstrom: float = 0.20,
+) -> Tuple[npt.NDArray[np.float32], npt.NDArray[np.float32], npt.NDArray[np.uint32], npt.NDArray[np.float32]]:
+    """Génère un maillage de ruban continu le long des atomes C-alpha par interpolation spline Catmull-Rom."""
+    pts = np.array(points, dtype=np.float32) * scale_to_mm
+    n_pts = len(pts)
+    if n_pts < 2:
+        return (
+            np.zeros((0, 3), dtype=np.float32),
+            np.zeros((0, 3), dtype=np.float32),
+            np.zeros((0, 3), dtype=np.uint32),
+            np.zeros(0, dtype=np.float32),
+        )
+
+    rx = rx_angstrom * scale_to_mm
+    ry = ry_angstrom * scale_to_mm
+
+    spline_pts: list[npt.NDArray[np.float32]] = []
+    spline_bs: list[float] = []
+
+    for i in range(n_pts - 1):
+        p0 = pts[max(0, i - 1)]
+        p1 = pts[i]
+        p2 = pts[i + 1]
+        p3 = pts[min(n_pts - 1, i + 2)]
+        b1 = b_factors[i]
+        b2 = b_factors[i + 1]
+
+        num_steps = n_sub if i < n_pts - 2 else n_sub + 1
+        for step in range(num_steps):
+            t = float(step) / float(n_sub)
+            t2 = t * t
+            t3 = t2 * t
+            interp_pt = 0.5 * (
+                (2.0 * p1)
+                + (-p0 + p2) * t
+                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+                + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3
+            )
+            spline_pts.append(interp_pt.astype(np.float32))
+            spline_bs.append(b1 + (b2 - b1) * t)
+
+    m_spline = len(spline_pts)
+    num_sides = 6
+    angles = np.linspace(0, 2 * math.pi, num_sides, endpoint=False)
+    cos_a = np.cos(angles).astype(np.float32)
+    sin_a = np.sin(angles).astype(np.float32)
+
+    # Initialisation du repère de Frenet / Bishop
+    initial_tan = spline_pts[1] - spline_pts[0]
+    initial_tan /= float(np.linalg.norm(initial_tan)) + 1e-8
+    up_ref = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    if abs(float(initial_tan[1])) > 0.9:
+        up_ref = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    curr_norm = np.cross(up_ref, initial_tan)
+    curr_norm /= float(np.linalg.norm(curr_norm)) + 1e-8
+
+    rings: list[list[npt.NDArray[np.float32]]] = []
+    ring_normals: list[list[npt.NDArray[np.float32]]] = []
+    ring_scalars: list[float] = []
+
+    for i in range(m_spline):
+        if i < m_spline - 1:
+            tangent = spline_pts[i + 1] - spline_pts[i]
+        else:
+            tangent = spline_pts[i] - spline_pts[i - 1]
+        t_len = float(np.linalg.norm(tangent))
+        if t_len > 1e-6:
+            tangent /= t_len
+
+        # Transport parallèle du vecteur normal
+        curr_norm = curr_norm - float(np.dot(curr_norm, tangent)) * tangent
+        n_len = float(np.linalg.norm(curr_norm))
+        if n_len > 1e-6:
+            curr_norm /= n_len
+        else:
+            up_ref = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+            if abs(float(tangent[1])) > 0.9:
+                up_ref = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            curr_norm = np.cross(up_ref, tangent)
+            curr_norm /= float(np.linalg.norm(curr_norm)) + 1e-8
+
+        curr_binorm = np.cross(tangent, curr_norm)
+
+        # Génération des sommets et normales de la section elliptique
+        ring_v: list[npt.NDArray[np.float32]] = []
+        ring_n: list[npt.NDArray[np.float32]] = []
+        for k in range(num_sides):
+            offset = curr_norm * (cos_a[k] * rx) + curr_binorm * (sin_a[k] * ry)
+            ring_v.append(spline_pts[i] + offset)
+            n_vec = curr_norm * (cos_a[k] / rx) + curr_binorm * (sin_a[k] / ry)
+            n_vec /= float(np.linalg.norm(n_vec)) + 1e-8
+            ring_n.append(n_vec)
+
+        rings.append(ring_v)
+        ring_normals.append(ring_n)
+        ring_scalars.extend([spline_bs[i]] * num_sides)
+
+    all_verts = np.array(rings, dtype=np.float32).reshape(-1, 3)
+    all_normals = np.array(ring_normals, dtype=np.float32).reshape(-1, 3)
+    all_scalars = np.array(ring_scalars, dtype=np.float32)
+
+    triangles: list[list[int]] = []
+    for i in range(m_spline - 1):
+        r1 = i * num_sides
+        r2 = (i + 1) * num_sides
+        for k in range(num_sides):
+            k_next = (k + 1) % num_sides
+            v1 = r1 + k
+            v2 = r1 + k_next
+            v3 = r2 + k
+            v4 = r2 + k_next
+            triangles.append([v1, v2, v3])
+            triangles.append([v2, v4, v3])
+
+    all_tris = np.array(triangles, dtype=np.uint32)
+    return all_verts, all_normals, all_tris, all_scalars
+
+
 class BiomoleculeProvider(GeometryProvider):
     """Fournisseur géométrique et moteur biophysique macromoléculaire 3D.
 
@@ -176,10 +302,11 @@ class BiomoleculeProvider(GeometryProvider):
         self,
         pdb_content: str | None = None,
         pdb_path: str | None = None,
+        pdb_code: str | None = None,
         mode: Literal["ball_and_stick", "ribbon", "spheres", "sticks"] = "ball_and_stick",
         scale_to_mm: float = 1.0,
     ) -> None:
-        """Initialise le fournisseur biomoléculaire avec une chaîne ou un fichier PDB."""
+        """Initialise le fournisseur biomoléculaire avec une chaîne, un fichier ou un code PDB."""
         self.mode: Literal["ball_and_stick", "ribbon", "spheres", "sticks"] = mode
         self.scale_to_mm: float = scale_to_mm
         self.raw_pdb_text: str = ""
@@ -189,27 +316,39 @@ class BiomoleculeProvider(GeometryProvider):
             self.load_pdb(pdb_content)
         elif pdb_path:
             self.load_file(pdb_path)
+        elif pdb_code:
+            self.fetch_pdb(pdb_code)
         else:
-            # Structure minimale par défaut : dipeptide Ala-Gly
-            default_pdb = (
-                "ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00 20.00           N\n"
-                "ATOM      2  CA  ALA A   1       1.458   0.000   0.000  1.00 20.00           C\n"
-                "ATOM      3  C   ALA A   1       2.009   1.420   0.000  1.00 20.00           C\n"
-                "ATOM      4  O   ALA A   1       1.306   2.428   0.000  1.00 20.00           O\n"
-                "ATOM      5  CB  ALA A   1       1.989  -0.771  -1.205  1.00 20.00           C\n"
-                "ATOM      6  N   GLY A   2       3.242   1.420   0.500  1.00 25.00           N\n"
-                "ATOM      7  CA  GLY A   2       3.800   2.700   0.500  1.00 25.00           C\n"
-                "ATOM      8  C   GLY A   2       5.200   2.700   0.000  1.00 25.00           C\n"
-                "ATOM      9  O   GLY A   2       5.800   3.700   0.000  1.00 25.00           O\n"
-                "TER      10      GLY A   2\n"
-                "END\n"
-            )
-            self.load_pdb(default_pdb)
+            # Structure de référence par défaut : Crambin (1CRN) si disponible, sinon dipeptide
+            asset_1crn = Path(__file__).parent.parent / "assets" / "1CRN.cif"
+            if asset_1crn.exists():
+                self.load_file(str(asset_1crn))
+            else:
+                default_pdb = (
+                    "ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00 20.00           N\n"
+                    "ATOM      2  CA  ALA A   1       1.458   0.000   0.000  1.00 20.00           C\n"
+                    "ATOM      3  C   ALA A   1       2.009   1.420   0.000  1.00 20.00           C\n"
+                    "ATOM      4  O   ALA A   1       1.306   2.428   0.000  1.00 20.00           O\n"
+                    "ATOM      5  CB  ALA A   1       1.989  -0.771  -1.205  1.00 20.00           C\n"
+                    "ATOM      6  N   GLY A   2       3.242   1.420   0.500  1.00 25.00           N\n"
+                    "ATOM      7  CA  GLY A   2       3.800   2.700   0.500  1.00 25.00           C\n"
+                    "ATOM      8  C   GLY A   2       5.200   2.700   0.000  1.00 25.00           C\n"
+                    "ATOM      9  O   GLY A   2       5.800   3.700   0.000  1.00 25.00           O\n"
+                    "TER      10      GLY A   2\n"
+                    "END\n"
+                )
+                self.load_pdb(default_pdb)
 
     def load_pdb(self, content: str) -> None:
         """Charge une structure protéique à partir d'une chaîne au format PDB."""
         self.raw_pdb_text = content
         self.structure = gemmi.read_pdb_string(content)
+
+    def _load_cif_text(self, text: str) -> None:
+        """Charge un document CIF / mmCIF depuis une chaîne de caractères."""
+        self.raw_pdb_text = text
+        doc = gemmi.cif.read_string(text)
+        self.structure = gemmi.make_structure_from_block(doc[0])
 
     def load_file(self, path: str) -> None:
         """Charge une structure depuis un fichier disque PDB ou mmCIF."""
@@ -220,6 +359,72 @@ class BiomoleculeProvider(GeometryProvider):
             self.structure = gemmi.make_structure_from_block(gemmi.cif.read(path)[0])
         else:
             self.structure = gemmi.read_structure(path)
+
+    def fetch_pdb(self, pdb_code: str) -> None:
+        """Télécharge ou charge une structure macromoléculaire par son code PDB (ex: '1CRN')."""
+        code = pdb_code.strip().upper()
+        asset_dir = Path(__file__).parent.parent / "assets"
+
+        # 1. Priorité au cache local si le fichier CIF ou PDB existe
+        cif_file = asset_dir / f"{code}.cif"
+        pdb_file = asset_dir / f"{code}.pdb"
+        if cif_file.exists():
+            self.load_file(str(cif_file))
+            return
+        if pdb_file.exists():
+            self.load_file(str(pdb_file))
+            return
+
+        # 2. Téléchargement depuis le RCSB PDB
+        try:
+            url = f"https://files.rcsb.org/download/{code}.cif"
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mono-CAD-Engine/2.0 (Biomolecular; Contact: support@mono-cad.org)"},
+            )
+            with urllib.request.urlopen(req, timeout=4.0) as response:
+                content_bytes = response.read()
+                cif_text = content_bytes.decode("utf-8", errors="ignore")
+                self._load_cif_text(cif_text)
+                return
+        except Exception:
+            pass
+
+        # 3. Fallback d'urgence pour 1CRN
+        if code == "1CRN" and cif_file.exists():
+            self.load_file(str(cif_file))
+            return
+
+        raise RuntimeError(f"Impossible de récupérer la structure PDB '{code}' en ligne ou dans les assets locaux.")
+
+    def get_crystallographic_info(self) -> dict[str, object]:
+        """Extrait les paramètres de maille élémentaire, groupe spatial et résolution cristallographique."""
+        cell = self.structure.cell
+        helices_cnt = len(self.structure.helices) if hasattr(self.structure, "helices") else 0
+        sheets_cnt = len(self.structure.sheets) if hasattr(self.structure, "sheets") else 0
+        bridges = self.find_disulfide_bridges()
+        res_val = float(self.structure.resolution) if (hasattr(self.structure, "resolution") and self.structure.resolution) else 0.0
+        sp_name = self.structure.spacegroup_hm if self.structure.spacegroup_hm else "Unknown"
+
+        return {
+            "pdb_code": self.structure.name or "1CRN",
+            "spacegroup": sp_name,
+            "resolution_angstrom": res_val,
+            "unit_cell": {
+                "a": float(cell.a) if cell else 0.0,
+                "b": float(cell.b) if cell else 0.0,
+                "c": float(cell.c) if cell else 0.0,
+                "alpha": float(cell.alpha) if cell else 0.0,
+                "beta": float(cell.beta) if cell else 0.0,
+                "gamma": float(cell.gamma) if cell else 0.0,
+                "volume": float(cell.volume) if cell else 0.0,
+            },
+            "secondary_structure": {
+                "helices_count": helices_cnt,
+                "sheets_count": sheets_cnt,
+            },
+            "disulfide_bridges_count": len(bridges),
+        }
 
     def get_chains(self) -> List[str]:
         """Renvoie la liste des identifiants de chaînes macromoléculaires."""
@@ -505,6 +710,42 @@ class BiomoleculeProvider(GeometryProvider):
                 all_scalars.append(scalars)
                 vertex_offset += len(transformed_verts)
 
+        # 3. Génération des rubans (Cartoon / C-alpha)
+        if self.mode == "ribbon":
+            has_ribbon = False
+            for chain in model:
+                ca_pts: list[npt.NDArray[np.float32]] = []
+                ca_bs: list[float] = []
+                for res in chain:
+                    ca = res.find_atom("CA", "*")
+                    if ca:
+                        ca_pts.append(np.array([ca.pos.x, ca.pos.y, ca.pos.z], dtype=np.float32))
+                        ca_bs.append(float(ca.b_iso))
+
+                if len(ca_pts) >= 2:
+                    has_ribbon = True
+                    r_verts, r_normals, r_tris, r_scalars = _generate_ribbon_mesh(
+                        ca_pts, ca_bs, scale_to_mm=self.scale_to_mm
+                    )
+                    norm_scalars = (r_scalars - min_b) / b_range
+                    all_verts.append(r_verts)
+                    all_normals.append(r_normals)
+                    all_indices.append(r_tris + vertex_offset)
+                    all_scalars.append(norm_scalars)
+                    vertex_offset += len(r_verts)
+
+            # Fallback sur sphères si aucun atome C-alpha (ex. petites molécules sans squelette peptidique)
+            if not has_ribbon:
+                for pos, rad, b_factor, _ in atoms_data:
+                    scaled_verts = (_SPHERE_VERTS * rad) + np.array(pos, dtype=np.float32)
+                    norm_b = (b_factor - min_b) / b_range
+                    scalars = np.full(len(scaled_verts), norm_b, dtype=np.float32)
+                    all_verts.append(scaled_verts)
+                    all_normals.append(_SPHERE_VERTS)
+                    all_indices.append(_SPHERE_INDICES + vertex_offset)
+                    all_scalars.append(scalars)
+                    vertex_offset += len(scaled_verts)
+
         final_vertices = np.vstack(all_verts)
         final_normals = np.vstack(all_normals)
         final_indices = np.vstack(all_indices)
@@ -685,24 +926,51 @@ class BiomoleculeProvider(GeometryProvider):
         ]
 
         header = self.structure.name if self.structure.name else "MONO_STRUCTURE"
+        categories: list[dict[str, object]] = [
+            {
+                "name": "_entry",
+                "rowCount": 1,
+                "columns": [{"name": "id", "data": _encode_string_array([header])}],
+            },
+        ]
+
+        if hasattr(self.structure, "cell") and self.structure.cell and self.structure.cell.is_crystal():
+            cell = self.structure.cell
+            categories.append({
+                "name": "_cell",
+                "rowCount": 1,
+                "columns": [
+                    {"name": "length_a", "data": _encode_numeric_array(np.array([float(cell.a)], dtype=np.float32), 32)},
+                    {"name": "length_b", "data": _encode_numeric_array(np.array([float(cell.b)], dtype=np.float32), 32)},
+                    {"name": "length_c", "data": _encode_numeric_array(np.array([float(cell.c)], dtype=np.float32), 32)},
+                    {"name": "angle_alpha", "data": _encode_numeric_array(np.array([float(cell.alpha)], dtype=np.float32), 32)},
+                    {"name": "angle_beta", "data": _encode_numeric_array(np.array([float(cell.beta)], dtype=np.float32), 32)},
+                    {"name": "angle_gamma", "data": _encode_numeric_array(np.array([float(cell.gamma)], dtype=np.float32), 32)},
+                ],
+            })
+
+        if hasattr(self.structure, "spacegroup_hm") and self.structure.spacegroup_hm:
+            categories.append({
+                "name": "_symmetry",
+                "rowCount": 1,
+                "columns": [
+                    {"name": "space_group_name_H_M", "data": _encode_string_array([self.structure.spacegroup_hm])},
+                ],
+            })
+
+        categories.append({
+            "name": "_atom_site",
+            "rowCount": row_count,
+            "columns": columns,
+        })
+
         bcif_payload: dict[str, object] = {
             "encoder": "Mono-Gemmi v2.0",
             "version": "0.3.0",
             "dataBlocks": [
                 {
                     "header": header,
-                    "categories": [
-                        {
-                            "name": "_entry",
-                            "rowCount": 1,
-                            "columns": [{"name": "id", "data": _encode_string_array([header])}],
-                        },
-                        {
-                            "name": "_atom_site",
-                            "rowCount": row_count,
-                            "columns": columns,
-                        },
-                    ],
+                    "categories": categories,
                 }
             ],
         }

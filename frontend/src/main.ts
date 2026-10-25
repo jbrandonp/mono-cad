@@ -201,13 +201,26 @@ class MonoApp {
 
     // --- Contrôles Biologie Moléculaire (Gemmi / Mol* / OpenMM) ---
     const btnLoadProtein = document.getElementById('btn-load-protein');
+    const inputPdbCode = document.getElementById('input-pdb-code') as HTMLInputElement | null;
+    const selectBioMode = document.getElementById('select-bio-mode') as HTMLSelectElement | null;
     if (btnLoadProtein) {
       btnLoadProtein.addEventListener('click', () => {
+        const pdbCode = inputPdbCode ? inputPdbCode.value.trim().toUpperCase() : '1CRN';
+        const mode = selectBioMode ? selectBioMode.value : 'ribbon';
+        btnLoadProtein.textContent = '⏳ Chargement PDB...';
         this.sendMessage({
           type: 'load_biomolecule',
           entity_id: 'protein_001',
-          mode: 'ball_and_stick',
+          pdb_code: pdbCode,
+          mode: mode,
         });
+      });
+    }
+
+    const btnDownloadPdb = document.getElementById('btn-download-pdb');
+    if (btnDownloadPdb) {
+      btnDownloadPdb.addEventListener('click', () => {
+        window.open('http://127.0.0.1:8000/api/biomolecule/pdb?entity_id=protein_001', '_blank');
       });
     }
 
@@ -650,10 +663,38 @@ class MonoApp {
       const eid = msg.entity_id as string;
       const chains = (msg.chains as string[]) || [];
       const seq = (msg.sequence as string) || '';
-      console.log(`Biomolécule '${eid}' chargée avec succès. Chaînes: ${chains.join(', ')}, Séquence: ${seq}`);
+      const crypto = msg.crystallography as {
+        spacegroup?: string;
+        resolution_angstrom?: number;
+        secondary_structure?: { helices_count: number; sheets_count: number };
+        disulfide_bridges_count?: number;
+      } | undefined;
+
+      const btnLoad = document.getElementById('btn-load-protein');
+      if (btnLoad) btnLoad.textContent = '🧬 Charger Protéine';
+
+      const statSpacegroup = document.getElementById('stat-bio-spacegroup');
+      if (statSpacegroup && crypto?.spacegroup) {
+        statSpacegroup.textContent = crypto.spacegroup;
+      }
+
+      const statRes = document.getElementById('stat-bio-resolution');
+      if (statRes && crypto?.resolution_angstrom !== undefined) {
+        statRes.textContent = crypto.resolution_angstrom > 0 ? `${crypto.resolution_angstrom} Å` : 'N/A';
+      }
+
+      const statSec = document.getElementById('stat-bio-secondary');
+      if (statSec && crypto?.secondary_structure) {
+        statSec.textContent = `${crypto.secondary_structure.helices_count} hel / ${crypto.secondary_structure.sheets_count} sht (${crypto.disulfide_bridges_count ?? 0} S-S)`;
+      }
+
       if (this.statManifold) {
-        this.statManifold.textContent = `BIO (${chains.length} ch)`;
+        this.statManifold.textContent = `BIO (${chains.length} ch, ${seq.length} aa)`;
         this.statManifold.className = 'stat-value highlight';
+      }
+
+      if (this.activeView === 'molstar') {
+        this.molstarViewer.loadFromUrl(`http://127.0.0.1:8000/api/biomolecule/bcif?entity_id=${eid}`, 'bcif');
       }
     } else if (msgType === 'biomolecule_simulated') {
       const btnOpenmm = document.getElementById('btn-openmm-sim');
