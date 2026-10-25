@@ -6,13 +6,14 @@ from typing import AsyncIterator
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
 from pydantic import BaseModel
 
-from mono.core.document import MonoDocument
+from mono.core.document import MonoDocument, EntityRecord
 from mono.ipc.websocket_manager import WebSocketIPCManager
 from mono.agent.cadengbench_gates import CADEngBenchGatekeeper, GateEvaluationResult
 from mono.agent.mac_orchestrator import MACOrchestrator, MockLLMProvider, MACExecutionResult
 from mono.execution.ecip_executor import execute_ecip_cad_block, ECIPExecutionError
 from mono.providers.brep_build123d import BRepBuild123dProvider
 from mono.providers.bim_ifc import BimIfcProvider
+from mono.providers.textile_xpbd import TextileXpbdProvider
 from mono.security.ast_validator import SecurityViolationError
 from mono.vision.quad_view_generator import QuadViewGenerator
 
@@ -61,6 +62,32 @@ class FEASimulateRequest(BaseModel):
     load_predicate: str = "max_z"
     element_size_max: float = 6.0
     target_safety_factor: float = 1.5
+
+
+class TextileCreateRequest(BaseModel):
+    """Schéma de requête pour l'instanciation d'un textile GPU XPBD."""
+
+    entity_id: str = "textile_001"
+    res_x: int = 30
+    res_y: int = 30
+    spacing: float = 0.03
+    compliance_stretch: float = 1e-6
+    compliance_bending: float = 5e-4
+    center_y: float = 1.0
+    orientation: str = "horizontal"
+    pin: str = "top"
+
+
+class TextileStepRequest(BaseModel):
+    """Schéma de requête pour faire avancer la simulation textile."""
+
+    entity_id: str = "textile_001"
+    n_frames: int = 1
+    ground_y: float = 0.0
+    gravity_y: float = -9.81
+    wind_x: float = 0.0
+    wind_y: float = 0.0
+    wind_z: float = 0.0
 
 
 class ServerState:
@@ -142,6 +169,69 @@ def get_bim_floorplan(entity_id: str | None = None, elevation_z: float = 1.2) ->
 
     floorplan = target_provider.generate_2d_floorplan(elevation_z=elevation_z)
     return Response(content=floorplan.svg_content, media_type="image/svg+xml")
+
+
+@app.post("/api/textile/create")
+async def create_textile(req: TextileCreateRequest) -> dict[str, object]:
+    """Instancie un textile ou une membrane souple simulée par GPU XPBD."""
+    provider = TextileXpbdProvider(
+        res_x=req.res_x,
+        res_y=req.res_y,
+        spacing=req.spacing,
+        compliance_stretch=req.compliance_stretch,
+        compliance_bending=req.compliance_bending,
+    )
+    if req.orientation == "vertical":
+        provider.reset_vertical(center_y=req.center_y)
+    else:
+        provider.reset_horizontal(center_y=req.center_y)
+
+    if req.pin == "top":
+        provider.pin_top_edge()
+    elif req.pin == "corners":
+        provider.pin_corners()
+    elif req.pin == "none":
+        provider.unpin_all()
+
+    state.doc.entities[req.entity_id] = EntityRecord(
+        entity_id=req.entity_id,
+        provider_name="textile_xpbd",
+        scale_domain="meter",
+        provider=provider,
+        tags=["textile", "xpbd", "gpu"],
+    )
+    return {
+        "status": "created",
+        "entity_id": req.entity_id,
+        "particles": provider.engine.n_particles,
+        "triangles": len(provider.indices),
+    }
+
+
+@app.post("/api/textile/step")
+async def step_textile(req: TextileStepRequest) -> dict[str, object]:
+    """Avance d'un ou plusieurs pas temporels la simulation textile XPBD."""
+    if req.entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité textile non trouvée dans la scène.")
+
+    rec = state.doc.entities[req.entity_id]
+    if not isinstance(rec.provider, TextileXpbdProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas un textile XPBD.")
+
+    if req.wind_x != 0.0 or req.wind_y != 0.0 or req.wind_z != 0.0:
+        rec.provider.set_wind(req.wind_x, req.wind_y, req.wind_z)
+
+    rec.provider.step(
+        n_frames=req.n_frames,
+        ground_y=req.ground_y,
+        gravity_y=req.gravity_y,
+    )
+    rec.is_dirty = True
+    return {
+        "status": "stepped",
+        "entity_id": req.entity_id,
+        "n_frames": req.n_frames,
+    }
 
 
 @app.post("/api/ecip/execute")
@@ -465,6 +555,22 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         await state.ipc.send_json(websocket, {
                             "type": "fea_failed",
                             "error": str(err),
+                        })
+
+            elif msg_type == "step_textile":
+                eid = str(msg.get("entity_id", "textile_001"))
+                n_frames = int(msg.get("n_frames", 1))
+                if eid in state.doc.entities:
+                    rec = state.doc.entities[eid]
+                    if isinstance(rec.provider, TextileXpbdProvider):
+                        rec.provider.step(n_frames=n_frames)
+                        rec.is_dirty = True
+                        payloads = state.doc.collect_dirty_binary_payloads()
+                        for payload in payloads:
+                            await state.ipc.broadcast_binary_mesh(payload)
+                        await state.ipc.send_json(websocket, {
+                            "type": "textile_stepped",
+                            "entity_id": eid,
                         })
 
     except WebSocketDisconnect:
