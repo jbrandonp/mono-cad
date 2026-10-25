@@ -477,8 +477,10 @@ class TextileXpbdProvider(GeometryProvider):
         compliance_bending: float = 5e-4,
         substeps: int = 10,
         dt: float = 0.016,
+        entity_id: str = "textile_cloth",
     ) -> None:
         """Initialise le fournisseur textile et alloue la grille physique."""
+        self.entity_id: str = entity_id
         self.res_x: int = res_x
         self.res_y: int = res_y
         self.spacing: float = spacing

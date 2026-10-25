@@ -24,3 +24,9 @@ bin/workers/
 *.cvg
 *.sta
 *.12d
+*.mono
+*.sqlite
+*.log
+*.zip
+.env
+.env.*
