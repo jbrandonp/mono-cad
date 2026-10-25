@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response
 from pydantic import BaseModel
 
+from mono.core.archive_mono import MonoArchive, MonoArchiveError
 from mono.core.document import MonoDocument, EntityRecord
 from mono.ipc.websocket_manager import WebSocketIPCManager
 from mono.agent.cadengbench_gates import CADEngBenchGatekeeper, GateEvaluationResult
@@ -18,6 +21,7 @@ from mono.providers.biomolecule_gemmi import BiomoleculeProvider
 from mono.providers.biomolecule_openmm import OpenMMSimulator, OpenMMSimulationResult, TrajectoryFrame
 from mono.providers.additive_slicer import AdditiveSlicerProvider
 from mono.providers.cam_machining import CamMachiningProvider, ToolDefinition, MachiningParameters
+from mono.providers.techdraw_drafting import TechDrawDraftingProvider, TitleBlock, TechDrawReport
 from mono.security.ast_validator import SecurityViolationError
 from mono.vision.quad_view_generator import QuadViewGenerator
 
@@ -143,6 +147,33 @@ class CamGenerateRequest(BaseModel):
     strategy: str = "finishing_scallop"
 
 
+class TechDrawGenerateRequest(BaseModel):
+    """Schéma de requête pour la mise en plan 2D industrielle TechDraw."""
+
+    entity_id: str = "part_001"
+    sheet_format: str = "A3"
+    orientation: str = "landscape"
+    title: str = "PIÈCE INDUSTRIELLE"
+    drawing_number: str = "DWG-1001"
+    material: str = "Aluminium 6061-T6"
+    author: str = "Brandon"
+    auto_dimension: bool = True
+
+
+class MonoArchiveExportRequest(BaseModel):
+    """Schéma de requête pour l'export du conteneur unifié .mono."""
+
+    title: str = "Mono Project"
+    author: str = "Brandon"
+    description: str = "Projet multi-domaines unifié Mono"
+
+
+class MonoArchiveImportRequest(BaseModel):
+    """Schéma de requête pour l'import d'une archive .mono encodée en base64."""
+
+    archive_base64: str
+
+
 class ServerState:
     """Conteneur d'état global du serveur backend local."""
 
@@ -150,6 +181,7 @@ class ServerState:
         self.doc: MonoDocument = MonoDocument()
         self.ipc: WebSocketIPCManager = WebSocketIPCManager()
         self.active_simulations: dict[str, OpenMMSimulationResult] = {}
+        self.last_archive_bytes: bytes = b""
 
 
 state = ServerState()
@@ -628,6 +660,152 @@ def get_slicer_gcode(entity_id: str = "part_001") -> Response:
         media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{entity_id}_print.gcode"'},
     )
+
+
+@app.post("/api/techdraw/generate")
+def generate_techdraw_endpoint(req: TechDrawGenerateRequest) -> dict[str, object]:
+    """Génère la mise en plan 2D industrielle (HLR, cartouche ISO 7200, GD&T, cotation)."""
+    if req.entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité introuvable dans la scène.")
+
+    rec = state.doc.entities[req.entity_id]
+    part = getattr(rec.provider, "part", None)
+    if part is None:
+        raise HTTPException(status_code=400, detail="L'entité ne possède pas de géométrie B-Rep projetable.")
+
+    tb = TitleBlock(
+        title=req.title,
+        drawing_number=req.drawing_number,
+        author=req.author,
+        material=req.material,
+        scale="1:1",
+    )
+    sheet_fmt = req.sheet_format.upper()
+    valid_fmts = ("A4", "A3", "A2", "A1")
+    chosen_fmt = sheet_fmt if sheet_fmt in valid_fmts else "A3"
+    chosen_orient = "portrait" if req.orientation.lower() == "portrait" else "landscape"
+
+    provider = TechDrawDraftingProvider(
+        entity_id=f"{req.entity_id}_techdraw",
+        part=part,
+        sheet_format=chosen_fmt,  # type: ignore
+        orientation=chosen_orient,  # type: ignore
+        title_block=tb,
+    )
+    report = provider.generate_drawing(auto_dimension=req.auto_dimension)
+
+    td_id = f"{req.entity_id}_techdraw"
+    state.doc.entities[td_id] = EntityRecord(
+        entity_id=td_id,
+        provider_name="techdraw_drafting",
+        scale_domain="milli",
+        provider=provider,
+        tags=["techdraw", "2d", "drawing", "gdt"],
+    )
+
+    return {
+        "entity_id": req.entity_id,
+        "techdraw_entity_id": td_id,
+        "sheet_format": report.sheet_format,
+        "sheet_width_mm": report.sheet_width_mm,
+        "sheet_height_mm": report.sheet_height_mm,
+        "views_count": report.views_count,
+        "total_visible_segments": report.total_visible_segments,
+        "total_hidden_segments": report.total_hidden_segments,
+        "dimensions_count": report.dimensions_count,
+        "gdt_count": report.gdt_count,
+        "svg_url": f"/api/techdraw/svg?entity_id={td_id}",
+        "dxf_url": f"/api/techdraw/dxf?entity_id={td_id}",
+    }
+
+
+@app.get("/api/techdraw/svg")
+def get_techdraw_svg(entity_id: str = "part_001_techdraw") -> Response:
+    """Télécharge ou affiche la planche de dessin technique au format vectoriel SVG."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Planche TechDraw introuvable.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, TechDrawDraftingProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas un plan TechDraw.")
+
+    svg_content = rec.provider.to_svg()
+    return Response(
+        content=svg_content,
+        media_type="image/svg+xml",
+        headers={"Content-Disposition": f'inline; filename="{entity_id}.svg"'},
+    )
+
+
+@app.get("/api/techdraw/dxf")
+def get_techdraw_dxf(entity_id: str = "part_001_techdraw") -> Response:
+    """Télécharge la planche de dessin technique au format AutoCAD DXF R2010."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Planche TechDraw introuvable.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, TechDrawDraftingProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas un plan TechDraw.")
+
+    dxf_content = rec.provider.to_dxf()
+    return Response(
+        content=dxf_content,
+        media_type="application/dxf",
+        headers={"Content-Disposition": f'attachment; filename="{entity_id}.dxf"'},
+    )
+
+
+@app.post("/api/archive/export")
+def export_archive_endpoint(req: MonoArchiveExportRequest) -> dict[str, object]:
+    """Empaquette la scène complète multi-domaines dans une archive unifiée .mono compressée zstd."""
+    meta = {
+        "title": req.title,
+        "author": req.author,
+        "description": req.description,
+    }
+    archive_bytes = MonoArchive.pack(state.doc, metadata=meta)
+    state.last_archive_bytes = archive_bytes
+    sha = hashlib.sha256(archive_bytes).hexdigest()
+
+    return {
+        "status": "success",
+        "archive_size_bytes": len(archive_bytes),
+        "archive_sha256": sha,
+        "entities_count": len(state.doc.entities),
+        "parameters_count": len(state.doc.parameters),
+        "download_url": "/api/archive/download",
+    }
+
+
+@app.get("/api/archive/download")
+def download_archive_endpoint() -> Response:
+    """Télécharge l'archive .mono du projet complet."""
+    if not state.last_archive_bytes:
+        state.last_archive_bytes = MonoArchive.pack(state.doc, metadata={"title": "Mono Unified Project"})
+
+    return Response(
+        content=state.last_archive_bytes,
+        media_type="application/zstd",
+        headers={"Content-Disposition": 'attachment; filename="project.mono"'},
+    )
+
+
+@app.post("/api/archive/import")
+def import_archive_endpoint(req: MonoArchiveImportRequest) -> dict[str, object]:
+    """Importe et désarchive un conteneur .mono encodé en base64."""
+    try:
+        raw_bytes = base64.b64decode(req.archive_base64)
+        doc, manifest = MonoArchive.unpack(raw_bytes)
+        state.doc = doc
+        return {
+            "status": "success",
+            "title": str(manifest.get("title", "")),
+            "author": str(manifest.get("author", "")),
+            "entities_restored": len(doc.entities),
+            "parameters_restored": len(doc.parameters),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Échec d'import de l'archive .mono : {exc}") from exc
 
 
 @app.post("/api/ecip/execute")
@@ -1223,6 +1401,73 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             "estimated_time_seconds": analysis.estimated_time_seconds,
                             "is_valid": analysis.is_valid,
                         })
+
+            elif msg_type == "generate_techdraw":
+                eid = str(msg.get("entity_id", "part_001"))
+                if eid in state.doc.entities:
+                    rec = state.doc.entities[eid]
+                    part = getattr(rec.provider, "part", None)
+                    if part is not None:
+                        sheet_fmt = str(msg.get("sheet_format", "A3")).upper()
+                        tb = TitleBlock(
+                            title=str(msg.get("title", "PIÈCE INDUSTRIELLE")),
+                            drawing_number=str(msg.get("drawing_number", "DWG-1001")),
+                            author=str(msg.get("author", "Brandon")),
+                            material=str(msg.get("material", "Aluminium 6061-T6")),
+                        )
+                        td_prov = TechDrawDraftingProvider(
+                            entity_id=f"{eid}_techdraw",
+                            part=part,
+                            sheet_format=sheet_fmt if sheet_fmt in ("A4", "A3", "A2", "A1") else "A3",  # type: ignore
+                            title_block=tb,
+                        )
+                        report = td_prov.generate_drawing(auto_dimension=True)
+                        td_id = f"{eid}_techdraw"
+                        state.doc.entities[td_id] = EntityRecord(
+                            entity_id=td_id,
+                            provider_name="techdraw_drafting",
+                            scale_domain="milli",
+                            provider=td_prov,
+                            tags=["techdraw", "2d", "drawing", "gdt"],
+                        )
+                        dirty_payloads = state.doc.collect_dirty_binary_payloads()
+                        for payload in dirty_payloads:
+                            await state.ipc.broadcast_binary_mesh(payload)
+
+                        await state.ipc.send_json(websocket, {
+                            "type": "techdraw_generated",
+                            "entity_id": eid,
+                            "techdraw_entity_id": td_id,
+                            "sheet_format": report.sheet_format,
+                            "sheet_width_mm": report.sheet_width_mm,
+                            "sheet_height_mm": report.sheet_height_mm,
+                            "views_count": report.views_count,
+                            "total_visible_segments": report.total_visible_segments,
+                            "total_hidden_segments": report.total_hidden_segments,
+                            "dimensions_count": report.dimensions_count,
+                            "gdt_count": report.gdt_count,
+                            "svg_content": td_prov.to_svg(),
+                        })
+
+            elif msg_type == "export_mono_archive":
+                meta = {
+                    "title": str(msg.get("title", "Mono Project")),
+                    "author": str(msg.get("author", "Brandon")),
+                    "description": str(msg.get("description", "Conteneur unifié")),
+                }
+                archive_bytes = MonoArchive.pack(state.doc, metadata=meta)
+                state.last_archive_bytes = archive_bytes
+                sha = hashlib.sha256(archive_bytes).hexdigest()
+                b64_str = base64.b64encode(archive_bytes).decode("ascii")
+
+                await state.ipc.send_json(websocket, {
+                    "type": "mono_archive_exported",
+                    "archive_size_bytes": len(archive_bytes),
+                    "archive_sha256": sha,
+                    "entities_count": len(state.doc.entities),
+                    "parameters_count": len(state.doc.parameters),
+                    "archive_base64": b64_str,
+                })
 
     except WebSocketDisconnect:
         state.ipc.disconnect(websocket)

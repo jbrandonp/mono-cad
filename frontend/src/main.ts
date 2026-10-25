@@ -51,6 +51,7 @@ class MonoApp {
   private labelFrame: HTMLElement | null = null;
   private labelRmsd: HTMLElement | null = null;
   private sliderTrajectory: HTMLInputElement | null = null;
+  private lastTechDrawSvg: string = '';
 
   constructor() {
     const canvas = document.getElementById('cad-canvas') as HTMLCanvasElement;
@@ -381,6 +382,120 @@ class MonoApp {
         }
       });
     }
+
+    // --- Contrôles Plans Techniques 2D & Conteneur .mono (Phase 9) ---
+    const btnGenerateTechDraw = document.getElementById('btn-generate-techdraw');
+    const selectTechdrawFormat = document.getElementById('select-techdraw-format') as HTMLSelectElement | null;
+    const selectTechdrawOrient = document.getElementById('select-techdraw-orient') as HTMLSelectElement | null;
+    const inputTechdrawTitle = document.getElementById('input-techdraw-title') as HTMLInputElement | null;
+    const inputTechdrawDwg = document.getElementById('input-techdraw-dwg') as HTMLInputElement | null;
+
+    if (btnGenerateTechDraw) {
+      btnGenerateTechDraw.addEventListener('click', () => {
+        btnGenerateTechDraw.textContent = '⏳ Calcul HLR...';
+        this.sendMessage({
+          type: 'generate_techdraw',
+          entity_id: 'part_001',
+          sheet_format: selectTechdrawFormat ? selectTechdrawFormat.value : 'A3',
+          orientation: selectTechdrawOrient ? selectTechdrawOrient.value : 'landscape',
+          title: inputTechdrawTitle ? inputTechdrawTitle.value : 'PIÈCE INDUSTRIELLE',
+          drawing_number: inputTechdrawDwg ? inputTechdrawDwg.value : 'DWG-1001',
+        });
+      });
+    }
+
+    const btnPreviewTechdraw = document.getElementById('btn-preview-techdraw');
+    const modalTechdraw = document.getElementById('techdraw-modal');
+    const containerSvg = document.getElementById('techdraw-svg-container');
+    const btnCloseModal = document.getElementById('btn-modal-close-techdraw');
+    const btnModalDownloadSvg = document.getElementById('btn-modal-download-svg');
+
+    if (btnPreviewTechdraw) {
+      btnPreviewTechdraw.addEventListener('click', () => {
+        if (!this.lastTechDrawSvg) {
+          alert("Veuillez d'abord générer le plan technique 2D.");
+          return;
+        }
+        if (modalTechdraw && containerSvg) {
+          containerSvg.innerHTML = this.lastTechDrawSvg;
+          modalTechdraw.style.display = 'flex';
+        }
+      });
+    }
+
+    if (btnCloseModal && modalTechdraw) {
+      btnCloseModal.addEventListener('click', () => {
+        modalTechdraw.style.display = 'none';
+      });
+    }
+
+    if (btnModalDownloadSvg) {
+      btnModalDownloadSvg.addEventListener('click', () => {
+        if (!this.lastTechDrawSvg) return;
+        const blob = new Blob([this.lastTechDrawSvg], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'plan_technique.svg';
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    const btnDownloadDxf = document.getElementById('btn-download-techdraw-dxf');
+    if (btnDownloadDxf) {
+      btnDownloadDxf.addEventListener('click', () => {
+        window.open('http://127.0.0.1:8000/api/techdraw/dxf?entity_id=part_001_techdraw', '_blank');
+      });
+    }
+
+    const btnExportMonoArchive = document.getElementById('btn-export-mono-archive');
+    if (btnExportMonoArchive) {
+      btnExportMonoArchive.addEventListener('click', () => {
+        btnExportMonoArchive.textContent = '⏳ Empaquetage...';
+        this.sendMessage({
+          type: 'export_mono_archive',
+          title: inputTechdrawTitle ? inputTechdrawTitle.value : 'Projet Mono',
+          author: 'Brandon',
+        });
+      });
+    }
+
+    const btnImportMonoTrigger = document.getElementById('btn-import-mono-trigger');
+    const fileImportMono = document.getElementById('file-import-mono') as HTMLInputElement | null;
+
+    if (btnImportMonoTrigger && fileImportMono) {
+      btnImportMonoTrigger.addEventListener('click', () => {
+        fileImportMono.click();
+      });
+
+      fileImportMono.addEventListener('change', async () => {
+        const file = fileImportMono.files?.[0];
+        if (!file) return;
+
+        btnImportMonoTrigger.textContent = '⏳ Restauration...';
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const res = reader.result as string;
+          const base64 = res.split(',')[1] || res;
+          try {
+            const resp = await fetch('http://127.0.0.1:8000/api/archive/import', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ archive_base64: base64 }),
+            });
+            const data = (await resp.json()) as { status: string; title: string; entities_restored: number };
+            alert(`Projet .mono importé avec succès !\n• Titre : ${data.title}\n• Entités restaurées : ${data.entities_restored}`);
+            this.sendMessage({ type: 'get_scene' });
+          } catch (err) {
+            alert(`Erreur d'import de l'archive .mono : ${err}`);
+          } finally {
+            btnImportMonoTrigger.textContent = '📂 Ouvrir Projet (.mono)';
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+    }
   }
 
   private playTrajectoryLoop(): void {
@@ -558,6 +673,29 @@ class MonoApp {
       const statMass = document.getElementById('stat-slicer-mass');
       if (statMass) statMass.textContent = `${mass.toFixed(2)} g`;
       console.log(`Tranchage 3D terminé : ${msg.layer_count} couches, ${mass.toFixed(1)}g PLA`);
+    } else if (msgType === 'techdraw_generated') {
+      const btnGen = document.getElementById('btn-generate-techdraw');
+      if (btnGen) btnGen.textContent = '📐 Générer Plan 2D';
+
+      this.lastTechDrawSvg = (msg.svg_content as string) || '';
+      const statViews = document.getElementById('stat-techdraw-views');
+      if (statViews) statViews.textContent = `${msg.views_count} vues`;
+
+      const statSegments = document.getElementById('stat-techdraw-segments');
+      if (statSegments) {
+        statSegments.textContent = `${msg.total_visible_segments} / ${msg.total_hidden_segments}`;
+      }
+      console.log(`Plan TechDraw généré : ${msg.views_count} vues, ${msg.total_visible_segments} traits continus, ${msg.total_hidden_segments} pointillés cachés`);
+    } else if (msgType === 'mono_archive_exported') {
+      const btnExp = document.getElementById('btn-export-mono-archive');
+      if (btnExp) btnExp.textContent = '📦 Sauvegarder .mono';
+
+      const sizeKb = ((msg.archive_size_bytes as number) / 1024).toFixed(1);
+      const statSize = document.getElementById('stat-archive-size');
+      if (statSize) statSize.textContent = `${sizeKb} Ko`;
+
+      window.open('http://127.0.0.1:8000/api/archive/download', '_blank');
+      console.log(`Archive .mono créée : ${sizeKb} Ko, SHA256: ${(msg.archive_sha256 as string).substring(0, 12)}...`);
     }
   }
 
