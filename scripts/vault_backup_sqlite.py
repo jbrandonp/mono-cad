@@ -24,6 +24,9 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 
 DEFAULT_VAULT_LOGS = Path(r"C:\Users\brand\OneDrive\Documents\Obsidian Vault\Gemini_Logs")
 DEFAULT_BACKUP_DIR = Path(os.path.expanduser(r"~\tmp\ai-backup"))
@@ -254,11 +257,9 @@ def run_hybrid_backup(
                     json.dumps(frontmatter, ensure_ascii=False)
                 ))
 
-                note_id = cur.lastrowid
-                if not note_id:
-                    cur.execute("SELECT id FROM notes WHERE rel_path = ?", (rel_path,))
-                    row = cur.fetchone()
-                    note_id = row[0] if row else None
+                cur.execute("SELECT id FROM notes WHERE rel_path = ?", (rel_path,))
+                row = cur.fetchone()
+                note_id = row[0] if row else None
 
                 if note_id:
                     # Remplacement des tags
