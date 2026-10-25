@@ -74,6 +74,20 @@ class MonoApp {
         this.sendMessage({ type: 'redo' });
       });
     }
+
+    const btnFea = document.getElementById('btn-fea-simulate');
+    if (btnFea) {
+      btnFea.addEventListener('click', () => {
+        btnFea.textContent = '⏳ CalculiX en cours...';
+        this.sendMessage({
+          type: 'run_fea',
+          entity_id: 'part_001',
+          young_modulus_gpa: 70.0,
+          yield_strength_mpa: 275.0,
+          force_z: -2500.0,
+        });
+      });
+    }
   }
 
   private connectWebSocket(): void {
@@ -132,6 +146,20 @@ class MonoApp {
       if (valLabel) {
         valLabel.textContent = pVal.toFixed(1);
       }
+    } else if (msgType === 'fea_completed') {
+      const btnFea = document.getElementById('btn-fea-simulate');
+      if (btnFea) {
+        btnFea.textContent = '⚡ Simulation FEA (CalculiX)';
+      }
+      const sf = msg.safety_factor as number;
+      const vm = msg.max_von_mises_mpa as number;
+      alert(`Simulation FEA terminée !\nContrainte max Von Mises : ${vm.toFixed(1)} MPa\nCoefficient de sécurité Sf : ${sf.toFixed(2)} (${sf >= 1.5 ? 'CERTIFIÉ SÛR' : 'SURCHARGE DÉTECTÉE'})`);
+    } else if (msgType === 'fea_failed') {
+      const btnFea = document.getElementById('btn-fea-simulate');
+      if (btnFea) {
+        btnFea.textContent = '⚡ Simulation FEA (CalculiX)';
+      }
+      alert(`Échec simulation FEA : ${msg.error}`);
     }
   }
 
@@ -155,6 +183,13 @@ class MonoApp {
 
     // 4. Identifiants de face (Uint32)
     const faceIds = new Uint32Array(buffer, offset, fLen);
+    offset += fLen * 4;
+
+    // 5. Champ scalaire FEA optionnel (Float32)
+    let scalarField: Float32Array | undefined = undefined;
+    if (buffer.byteLength >= offset + header.vertex_count * 4) {
+      scalarField = new Float32Array(buffer, offset, header.vertex_count);
+    }
 
     // Mise à jour immédiate du viewport 3D Three.js
     this.viewport.updateMesh({
@@ -163,6 +198,7 @@ class MonoApp {
       normals,
       indices,
       faceIds,
+      scalarField,
     });
 
     // Mise à jour des compteurs HUD

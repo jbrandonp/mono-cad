@@ -87,6 +87,7 @@ class FeaGmshProvider(GeometryProvider):
         boundary: FEABoundaryCondition = FEABoundaryCondition(),
         element_size_max: float = 6.0,
         target_safety_factor: float = 1.5,
+        auto_defeaturing: bool = False,
     ) -> None:
         """Initialise le fournisseur FEA avec une géométrie B-Rep ou un fichier STEP.
 
@@ -98,6 +99,7 @@ class FeaGmshProvider(GeometryProvider):
             boundary: Conditions aux limites d'encastrement et d'effort mécanique.
             element_size_max: Taille maximale de maille tétraédrique en mm.
             target_safety_factor: Facteur de sécurité minimal requis pour certification.
+            auto_defeaturing: Si True, applique BRepAlgoAPI_Defeaturing avant le maillage.
         """
         self._entity_id: str = entity_id
         self._part: bd.Part | bd.Solid | bd.Compound | None = part
@@ -106,6 +108,7 @@ class FeaGmshProvider(GeometryProvider):
         self._boundary: FEABoundaryCondition = boundary
         self._element_size_max: float = element_size_max
         self._target_safety_factor: float = target_safety_factor
+        self._auto_defeaturing: bool = auto_defeaturing
 
         self._cached_result: FEAResult | None = None
         self._native_frd_bytes: bytes = b""
@@ -126,24 +129,39 @@ class FeaGmshProvider(GeometryProvider):
     def last_result(self) -> FEAResult | None:
         return self._cached_result
 
-    def apply_defeaturing(self, min_feature_size_mm: float = 1.0) -> None:
+    def apply_defeaturing(
+        self,
+        min_feature_size_mm: float | None = None,
+        auto_ratio: float = 0.05,
+    ) -> None:
         """Supprime les micro-congés et micro-faces susceptibles de dégrader le maillage.
 
         Utilise l'algorithme exact OpenCASCADE BRepAlgoAPI_Defeaturing.
+        Règle d'ingénierie automatique : élimine toute face dont l'aire est inférieure à
+        auto_ratio * aire_moyenne (0.05 par défaut) ou inférieure à min_feature_size_mm.
 
         Args:
-            min_feature_size_mm: Rayon ou taille en-deçà duquel une face est éliminée.
+            min_feature_size_mm: Rayon ou taille absolue en-deçà duquel une face est éliminée.
+            auto_ratio: Ratio par rapport à la surface moyenne des faces (défaut 0.05 = 5%).
         """
         if self._part is None:
             return
 
+        all_faces = list(self._part.faces())
+        if not all_faces:
+            return
+
+        mean_area = sum(f.area for f in all_faces) / len(all_faces)
+        threshold_area = mean_area * auto_ratio
+        if min_feature_size_mm is not None:
+            threshold_area = max(threshold_area, min_feature_size_mm * min_feature_size_mm * 0.5)
+
         faces_to_remove: list[bd.Face] = []
-        for face in self._part.faces():
-            area = face.area
-            if area < (min_feature_size_mm * min_feature_size_mm * 0.5):
+        for face in all_faces:
+            if face.area < threshold_area:
                 faces_to_remove.append(face)
 
-        if not faces_to_remove:
+        if not faces_to_remove or len(faces_to_remove) >= len(all_faces):
             return
 
         defeature = BRepAlgoAPI_Defeaturing()
@@ -178,7 +196,11 @@ class FeaGmshProvider(GeometryProvider):
             target_dir = Path(tmp_str) if working_dir is None else working_dir
             target_dir.mkdir(parents=True, exist_ok=True)
 
-            # 1. Sauvegarde géométrique au format STEP pour importation Gmsh
+            # 1. Défeaturisation préalable automatique si activée
+            if self._auto_defeaturing:
+                self.apply_defeaturing()
+
+            # 2. Sauvegarde géométrique au format STEP pour importation Gmsh
             step_file = target_dir / "geometry.step"
             if self._part is not None:
                 bd.export_step(self._part, str(step_file))

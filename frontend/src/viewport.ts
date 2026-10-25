@@ -7,6 +7,7 @@ export interface BinaryMeshUpdate {
   normals: Float32Array;
   indices: Uint32Array;
   faceIds: Uint32Array;
+  scalarField?: Float32Array;
 }
 
 export class CadViewport {
@@ -89,13 +90,43 @@ export class CadViewport {
     geometry.setIndex(new THREE.BufferAttribute(data.indices, 1));
     geometry.computeBoundingBox();
 
-    // 2. Matériau PBR mécanique métallique doux (Aluminium 6061)
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x64748b,
-      metalness: 0.6,
-      roughness: 0.35,
-      side: THREE.DoubleSide,
-    });
+    // 2. Matériau PBR mécanique ou Heatmap FEA
+    let material: THREE.MeshStandardMaterial;
+
+    if (data.scalarField && data.scalarField.length > 0) {
+      const colors = new Float32Array(data.scalarField.length * 3);
+      for (let i = 0; i < data.scalarField.length; i++) {
+        const val = Math.max(0, Math.min(1, data.scalarField[i]));
+        // Heatmap Jet/Rainbow : Bleu (0.0) -> Cyan -> Vert -> Jaune -> Rouge (1.0)
+        let r = 0, g = 0, b = 0;
+        if (val < 0.25) {
+          r = 0; g = val * 4; b = 1;
+        } else if (val < 0.5) {
+          r = 0; g = 1; b = 1 - (val - 0.25) * 4;
+        } else if (val < 0.75) {
+          r = (val - 0.5) * 4; g = 1; b = 0;
+        } else {
+          r = 1; g = 1 - (val - 0.75) * 4; b = 0;
+        }
+        colors[i * 3] = r;
+        colors[i * 3 + 1] = g;
+        colors[i * 3 + 2] = b;
+      }
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      material = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        metalness: 0.1,
+        roughness: 0.45,
+        side: THREE.DoubleSide,
+      });
+    } else {
+      material = new THREE.MeshStandardMaterial({
+        color: 0x64748b,
+        metalness: 0.6,
+        roughness: 0.35,
+        side: THREE.DoubleSide,
+      });
+    }
 
     const mesh = new THREE.Mesh(geometry, material);
     this.scene.add(mesh);

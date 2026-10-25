@@ -120,10 +120,10 @@ def test_fea_defeaturing_clean() -> None:
     """Vérifie l'application de l'algorithme OpenCASCADE BRepAlgoAPI_Defeaturing."""
     # Création d'une boîte avec une petite protrusion
     base = bd.Box(20.0, 20.0, 20.0)
-    provider = FeaGmshProvider(entity_id="box_feat", part=base)
+    provider = FeaGmshProvider(entity_id="box_feat", part=base, auto_defeaturing=True)
 
-    # Appel du defeaturing (ne doit pas lever d'exception sur un solide propre)
-    provider.apply_defeaturing(min_feature_size_mm=0.5)
+    # Appel du defeaturing avec règle automatique surface < 0.05 * surface_moyenne
+    provider.apply_defeaturing(auto_ratio=0.05)
     assert provider._part is not None
 
 
