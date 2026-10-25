@@ -14,6 +14,7 @@ from mono.execution.ecip_executor import execute_ecip_cad_block, ECIPExecutionEr
 from mono.providers.brep_build123d import BRepBuild123dProvider
 from mono.providers.bim_ifc import BimIfcProvider
 from mono.providers.textile_xpbd import TextileXpbdProvider
+from mono.providers.biomolecule_gemmi import BiomoleculeProvider
 from mono.security.ast_validator import SecurityViolationError
 from mono.vision.quad_view_generator import QuadViewGenerator
 
@@ -88,6 +89,15 @@ class TextileStepRequest(BaseModel):
     wind_x: float = 0.0
     wind_y: float = 0.0
     wind_z: float = 0.0
+
+
+class BiomoleculeLoadRequest(BaseModel):
+    """Schéma de requête pour le chargement d'une structure protéique ou acide nucléique."""
+
+    entity_id: str = "protein_001"
+    pdb_content: str | None = None
+    pdb_path: str | None = None
+    mode: str = "ball_and_stick"
 
 
 class ServerState:
@@ -231,6 +241,76 @@ async def step_textile(req: TextileStepRequest) -> dict[str, object]:
         "status": "stepped",
         "entity_id": req.entity_id,
         "n_frames": req.n_frames,
+    }
+
+
+@app.post("/api/biomolecule/load")
+def load_biomolecule(req: BiomoleculeLoadRequest) -> dict[str, object]:
+    """Charge une macromolécule biologique 3D (PDB / mmCIF) dans la scène."""
+    mode_str: Literal["ball_and_stick", "ribbon", "spheres", "sticks"] = (
+        req.mode if req.mode in ("ball_and_stick", "ribbon", "spheres", "sticks") else "ball_and_stick"
+    )
+    provider = BiomoleculeProvider(
+        pdb_content=req.pdb_content,
+        pdb_path=req.pdb_path,
+        mode=mode_str,
+    )
+    chains = provider.get_chains()
+    primary_chain = chains[0] if chains else "A"
+    sequence = provider.get_sequence(primary_chain)
+    report = provider.introspect()
+
+    state.doc.entities[req.entity_id] = EntityRecord(
+        entity_id=req.entity_id,
+        provider_name="biomolecule_gemmi",
+        scale_domain="nano",
+        provider=provider,
+        tags=["biology", "protein", "pdb"],
+    )
+    return {
+        "status": "loaded",
+        "entity_id": req.entity_id,
+        "chains": chains,
+        "sequence": sequence,
+        "topology": report.topology_counts,
+    }
+
+
+@app.get("/api/biomolecule/ramachandran")
+def get_biomolecule_ramachandran(entity_id: str = "protein_001") -> dict[str, object]:
+    """Calcule et renvoie les angles de torsion dièdres (phi, psi) de Ramachandran."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité biomoléculaire non trouvée dans la scène.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, BiomoleculeProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas une biomolécule.")
+
+    points = rec.provider.compute_ramachandran()
+    disulfides = rec.provider.find_disulfide_bridges()
+    return {
+        "entity_id": entity_id,
+        "ramachandran_points": [
+            {
+                "chain": pt.chain,
+                "res_name": pt.res_name,
+                "res_num": pt.res_num,
+                "phi": pt.phi_deg,
+                "psi": pt.psi_deg,
+                "region": pt.region,
+            }
+            for pt in points
+        ],
+        "disulfide_bridges": [
+            {
+                "chain1": b.chain1,
+                "res1": b.res1_num,
+                "chain2": b.chain2,
+                "res2": b.res2_num,
+                "distance": b.distance_angstrom,
+            }
+            for b in disulfides
+        ],
     }
 
 
