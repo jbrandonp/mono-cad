@@ -12,6 +12,7 @@ from mono.agent.cadengbench_gates import CADEngBenchGatekeeper, GateEvaluationRe
 from mono.agent.mac_orchestrator import MACOrchestrator, MockLLMProvider, MACExecutionResult
 from mono.execution.ecip_executor import execute_ecip_cad_block, ECIPExecutionError
 from mono.providers.brep_build123d import BRepBuild123dProvider
+from mono.providers.bim_ifc import BimIfcProvider
 from mono.security.ast_validator import SecurityViolationError
 from mono.vision.quad_view_generator import QuadViewGenerator
 
@@ -120,6 +121,27 @@ def get_scene_quad_view() -> Response:
     generator = QuadViewGenerator(size=1024)
     result = generator.generate(target_provider.part, title="MONO CADEngBench Inspection")
     return Response(content=result.image_bytes, media_type="image/png")
+
+
+@app.get("/api/bim/floorplan")
+def get_bim_floorplan(entity_id: str | None = None, elevation_z: float = 1.2) -> Response:
+    """Génère la planche 2D de coupe d'étage architecturale (SVG) via l'algorithme HLR."""
+    target_provider = None
+    if entity_id and entity_id in state.doc.entities:
+        rec = state.doc.entities[entity_id]
+        if isinstance(rec.provider, BimIfcProvider):
+            target_provider = rec.provider
+    else:
+        for rec in state.doc.entities.values():
+            if isinstance(rec.provider, BimIfcProvider):
+                target_provider = rec.provider
+                break
+
+    if target_provider is None:
+        raise HTTPException(status_code=404, detail="Aucun modèle BIM IFC trouvé dans la scène.")
+
+    floorplan = target_provider.generate_2d_floorplan(elevation_z=elevation_z)
+    return Response(content=floorplan.svg_content, media_type="image/svg+xml")
 
 
 @app.post("/api/ecip/execute")
