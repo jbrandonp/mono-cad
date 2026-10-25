@@ -328,12 +328,46 @@
 
       <!-- Viewport 3D Principal Three.js & Mol* -->
       <main id="viewport-container">
+        <!-- Barre d'outils interactive du Viewport (Gizmo & Affichage) -->
+        <div id="viewport-toolbar" class="viewport-toolbar">
+          <div class="toolbar-group">
+            <button id="btn-tool-orbit" class="tool-btn" title="Mode Caméra / Orbite (Échap)">🧭</button>
+            <button id="btn-tool-translate" class="tool-btn active" title="Déplacer / Translation (T)">↔️</button>
+            <button id="btn-tool-rotate" class="tool-btn" title="Pivoter / Rotation (R)">🔄</button>
+            <button id="btn-tool-scale" class="tool-btn" title="Mettre à l'échelle (S)">📐</button>
+          </div>
+          <div class="toolbar-separator"></div>
+          <div class="toolbar-group">
+            <button id="btn-toggle-shadows" class="tool-btn active" title="Activer / Désactiver les ombres PBR">💡</button>
+            <button id="btn-toggle-tree" class="tool-btn active" title="Afficher / Masquer l'arborescence de scène">🌳 Graphe</button>
+          </div>
+        </div>
+
         <div id="cad-view" style="width: 100%; height: 100%;">
           <canvas id="cad-canvas"></canvas>
         </div>
         <div id="molstar-view" style="display: none; width: 100%; height: 100%; position: absolute; inset: 0;">
           <div id="molstar-container" style="width: 100%; height: 100%; position: absolute; inset: 0;"></div>
         </div>
+
+        <!-- Panneau Flottant Graphe de Scène (Scene Tree View) -->
+        <aside id="scene-tree-panel" class="scene-tree-panel">
+          <div class="tree-header">
+            <div class="tree-title">
+              <span>🌳 Graphe de Scène</span>
+              <span id="tree-entity-count" class="badge-count">0</span>
+            </div>
+            <div class="tree-actions">
+              <button id="btn-tree-show-all" class="btn-icon" title="Tout afficher">👁️</button>
+              <button id="btn-tree-hide-all" class="btn-icon" title="Tout masquer">🕶️</button>
+              <button id="btn-tree-clear-all" class="btn-icon danger" title="Vider la scène">🗑️</button>
+            </div>
+          </div>
+          <div id="scene-tree-list" class="scene-tree-list">
+            <div class="tree-empty">Aucune entité 3D dans la scène</div>
+          </div>
+        </aside>
+
         <div id="viewport-overlay">
           <div class="viewport-hud">
             <span id="hud-camera-mode">PERSPECTIVE / RTC FLOAT64</span>

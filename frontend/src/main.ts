@@ -1,4 +1,4 @@
-import { CadViewport } from './viewport.ts';
+import { CadViewport, SceneEntityInfo, TransformMode } from './viewport.ts';
 import { MolstarViewer } from './molstar_viewer.ts';
 
 interface ParameterDef {
@@ -52,6 +52,15 @@ class MonoApp {
   private labelRmsd: HTMLElement | null = null;
   private sliderTrajectory: HTMLInputElement | null = null;
   private lastTechDrawSvg: string = '';
+  private sceneTreePanel: HTMLElement | null = null;
+  private sceneTreeList: HTMLElement | null = null;
+  private treeEntityCount: HTMLElement | null = null;
+  private btnToolOrbit: HTMLElement | null = null;
+  private btnToolTranslate: HTMLElement | null = null;
+  private btnToolRotate: HTMLElement | null = null;
+  private btnToolScale: HTMLElement | null = null;
+  private btnToggleShadows: HTMLElement | null = null;
+  private btnToggleTree: HTMLElement | null = null;
 
   constructor() {
     const canvas = document.getElementById('cad-canvas') as HTMLCanvasElement;
@@ -70,6 +79,24 @@ class MonoApp {
     this.labelRmsd = document.getElementById('label-rmsd');
     this.sliderTrajectory = document.getElementById('slider-trajectory') as HTMLInputElement | null;
 
+    this.sceneTreePanel = document.getElementById('scene-tree-panel');
+    this.sceneTreeList = document.getElementById('scene-tree-list');
+    this.treeEntityCount = document.getElementById('tree-entity-count');
+    this.btnToolOrbit = document.getElementById('btn-tool-orbit');
+    this.btnToolTranslate = document.getElementById('btn-tool-translate');
+    this.btnToolRotate = document.getElementById('btn-tool-rotate');
+    this.btnToolScale = document.getElementById('btn-tool-scale');
+    this.btnToggleShadows = document.getElementById('btn-toggle-shadows');
+    this.btnToggleTree = document.getElementById('btn-toggle-tree');
+
+    this.viewport.onEntitiesChanged = (entities: SceneEntityInfo[]) => {
+      this.renderSceneTree(entities);
+    };
+
+    this.viewport.onEntitySelected = (selectedId: string | null) => {
+      this.updateTreeSelection(selectedId);
+    };
+
     this.setupUIHandlers();
     this.connectWebSocket();
 
@@ -83,6 +110,60 @@ class MonoApp {
   }
 
   private setupUIHandlers(): void {
+    // Contrôles du Gizmo 3D et modes de transformation
+    this.btnToolOrbit?.addEventListener('click', () => {
+      this.viewport.setTransformMode('none');
+      this.updateToolbarActiveMode('none');
+    });
+
+    this.btnToolTranslate?.addEventListener('click', () => {
+      this.viewport.setTransformMode('translate');
+      this.updateToolbarActiveMode('translate');
+    });
+
+    this.btnToolRotate?.addEventListener('click', () => {
+      this.viewport.setTransformMode('rotate');
+      this.updateToolbarActiveMode('rotate');
+    });
+
+    this.btnToolScale?.addEventListener('click', () => {
+      this.viewport.setTransformMode('scale');
+      this.updateToolbarActiveMode('scale');
+    });
+
+    // Bascule d'éclairage PBR et ombres douces
+    this.btnToggleShadows?.addEventListener('click', () => {
+      const active = this.viewport.toggleShadows();
+      this.btnToggleShadows?.classList.toggle('active', active);
+    });
+
+    // Bascule du panneau Arborescence de scène
+    this.btnToggleTree?.addEventListener('click', () => {
+      const isHidden = this.sceneTreePanel?.classList.toggle('hidden');
+      this.btnToggleTree?.classList.toggle('active', !isHidden);
+    });
+
+    // Actions globales de l'arborescence
+    document.getElementById('btn-tree-show-all')?.addEventListener('click', () => {
+      const list = this.viewport.getEntityList();
+      for (const item of list) {
+        this.viewport.setEntityVisibility(item.id, true);
+      }
+    });
+
+    document.getElementById('btn-tree-hide-all')?.addEventListener('click', () => {
+      const list = this.viewport.getEntityList();
+      for (const item of list) {
+        this.viewport.setEntityVisibility(item.id, false);
+      }
+    });
+
+    document.getElementById('btn-tree-clear-all')?.addEventListener('click', () => {
+      if (confirm('Voulez-vous vraiment vider toutes les entités 3D de la scène ?')) {
+        this.viewport.clearScene();
+      }
+    });
+
     const btnQuadView = document.getElementById('btn-quad-view');
     if (btnQuadView) {
       btnQuadView.addEventListener('click', () => {
@@ -893,6 +974,118 @@ class MonoApp {
       });
 
       this.parametersContainer.appendChild(item);
+    });
+  }
+
+  private updateToolbarActiveMode(mode: TransformMode): void {
+    this.btnToolOrbit?.classList.toggle('active', mode === 'none');
+    this.btnToolTranslate?.classList.toggle('active', mode === 'translate');
+    this.btnToolRotate?.classList.toggle('active', mode === 'rotate');
+    this.btnToolScale?.classList.toggle('active', mode === 'scale');
+  }
+
+  private renderSceneTree(entities: SceneEntityInfo[]): void {
+    if (!this.sceneTreeList || !this.treeEntityCount) return;
+
+    this.treeEntityCount.textContent = entities.length.toString();
+
+    if (entities.length === 0) {
+      this.sceneTreeList.innerHTML = '<div class="tree-empty">Aucune entité 3D dans la scène</div>';
+      return;
+    }
+
+    this.sceneTreeList.innerHTML = '';
+
+    for (const entity of entities) {
+      const itemEl = document.createElement('div');
+      itemEl.className = `tree-item ${entity.selected ? 'selected' : ''} ${!entity.visible ? 'hidden-entity' : ''}`;
+      itemEl.dataset.entityId = entity.id;
+
+      // Badge du type
+      const badge = document.createElement('span');
+      badge.className = `tree-item-badge badge-${entity.type}`;
+      badge.textContent = entity.type.toUpperCase();
+
+      // Conteneur d'informations
+      const infoContainer = document.createElement('div');
+      infoContainer.className = 'tree-item-info';
+      infoContainer.title = `${entity.id} (${entity.triangleCount.toLocaleString()} tri) - Clic pour sélectionner, Double-clic pour centrer`;
+
+      const name = document.createElement('span');
+      name.className = 'tree-item-name';
+      name.textContent = entity.id;
+
+      const meta = document.createElement('span');
+      meta.className = 'tree-item-meta';
+      meta.textContent = `${entity.triangleCount} tri`;
+
+      infoContainer.appendChild(badge);
+      infoContainer.appendChild(name);
+      infoContainer.appendChild(meta);
+
+      infoContainer.addEventListener('click', () => {
+        this.viewport.selectEntity(entity.id);
+      });
+
+      infoContainer.addEventListener('dblclick', () => {
+        this.viewport.focusEntity(entity.id);
+      });
+
+      // Actions sur l'entité
+      const actions = document.createElement('div');
+      actions.className = 'tree-item-actions';
+
+      // Bouton Visibilité
+      const btnEye = document.createElement('button');
+      btnEye.className = 'btn-icon';
+      btnEye.title = entity.visible ? 'Masquer (H)' : 'Afficher (H)';
+      btnEye.textContent = entity.visible ? '👁️' : '🕶️';
+      btnEye.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.viewport.toggleEntityVisibility(entity.id);
+      });
+
+      // Bouton Centrer la vue
+      const btnFocus = document.createElement('button');
+      btnFocus.className = 'btn-icon';
+      btnFocus.title = 'Centrer la caméra (F)';
+      btnFocus.textContent = '🎯';
+      btnFocus.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.viewport.focusEntity(entity.id);
+      });
+
+      // Bouton Supprimer
+      const btnDel = document.createElement('button');
+      btnDel.className = 'btn-icon danger';
+      btnDel.title = 'Supprimer l\'entité';
+      btnDel.textContent = '🗑️';
+      btnDel.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.viewport.removeEntity(entity.id);
+      });
+
+      actions.appendChild(btnEye);
+      actions.appendChild(btnFocus);
+      actions.appendChild(btnDel);
+
+      itemEl.appendChild(infoContainer);
+      itemEl.appendChild(actions);
+
+      this.sceneTreeList.appendChild(itemEl);
+    }
+  }
+
+  private updateTreeSelection(selectedId: string | null): void {
+    if (!this.sceneTreeList) return;
+    const items = this.sceneTreeList.querySelectorAll('.tree-item');
+    items.forEach((el) => {
+      const htmlEl = el as HTMLElement;
+      if (htmlEl.dataset.entityId === selectedId) {
+        htmlEl.classList.add('selected');
+      } else {
+        htmlEl.classList.remove('selected');
+      }
     });
   }
 
