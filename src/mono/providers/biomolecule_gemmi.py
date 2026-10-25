@@ -70,6 +70,38 @@ VDW_RADII: dict[str, float] = {
 }
 
 
+def _encode_string_array(strings: list[str]) -> dict[str, object]:
+    """Encode une colonne de chaînes de caractères au format BinaryCIF StringArray."""
+    unique: list[str] = list(dict.fromkeys(strings))
+    str_indices: npt.NDArray[np.int32] = np.array([unique.index(s) for s in strings], dtype=np.int32)
+    str_data: str = "".join(unique)
+    offsets: list[int] = [0]
+    for s in unique:
+        offsets.append(offsets[-1] + len(s))
+    offsets_arr: npt.NDArray[np.int32] = np.array(offsets, dtype=np.int32)
+    return {
+        "data": str_indices.tobytes(),
+        "encoding": [
+            {
+                "kind": "StringArray",
+                "stringData": str_data,
+                "offsets": offsets_arr.tobytes(),
+                "offsetEncoding": [{"kind": "ByteArray", "type": 3}],
+                "dataEncoding": [{"kind": "ByteArray", "type": 3}],
+            },
+            {"kind": "ByteArray", "type": 3},
+        ],
+    }
+
+
+def _encode_numeric_array(arr: npt.NDArray[np.number], type_code: int) -> dict[str, object]:
+    """Encode un tableau numérique au format BinaryCIF ByteArray."""
+    return {
+        "data": arr.tobytes(),
+        "encoding": [{"kind": "ByteArray", "type": type_code}],
+    }
+
+
 def _create_unit_sphere(stacks: int = 6, slices: int = 8) -> Tuple[npt.NDArray[np.float32], npt.NDArray[np.uint32]]:
     """Génère un maillage de sphère unitaire centrée en (0, 0, 0)."""
     vertices: list[tuple[float, float, float]] = []
@@ -571,3 +603,142 @@ class BiomoleculeProvider(GeometryProvider):
         if self.raw_pdb_text:
             return self.raw_pdb_text.encode("utf-8")
         return self.structure.make_pdb_string().encode("utf-8")
+
+    def serialize_mmcif(self) -> str:
+        """Sérialise la structure au format standard mmCIF (CIF macromoléculaire)."""
+        if not self.structure or len(self.structure) == 0:
+            return ""
+        doc = self.structure.make_mmcif_document()
+        return doc.as_string()
+
+    def serialize_binary_cif(self) -> bytes:
+        """Sérialise la macromolécule au format binaire BinaryCIF (.bcif) pour Mol* et RCSB PDB."""
+        if not self.structure or len(self.structure) == 0:
+            return b""
+
+        import msgpack
+
+        model = self.structure[0]
+        group_pdb: list[str] = []
+        atom_ids: list[int] = []
+        type_symbols: list[str] = []
+        atom_names: list[str] = []
+        comp_ids: list[str] = []
+        asym_ids: list[str] = []
+        seq_ids: list[int] = []
+        xs: list[float] = []
+        ys: list[float] = []
+        zs: list[float] = []
+        occupancies: list[float] = []
+        b_factors: list[float] = []
+
+        atom_counter = 1
+        for chain in model:
+            for res in chain:
+                r_num = int(res.seqid.num)
+                for atom in res:
+                    group_pdb.append("HETATM" if res.is_water() else "ATOM")
+                    atom_ids.append(atom_counter)
+                    type_symbols.append(atom.element.name.upper())
+                    atom_names.append(atom.name)
+                    comp_ids.append(res.name)
+                    asym_ids.append(chain.name)
+                    seq_ids.append(r_num)
+                    xs.append(float(atom.pos.x))
+                    ys.append(float(atom.pos.y))
+                    zs.append(float(atom.pos.z))
+                    occupancies.append(float(atom.occ))
+                    b_factors.append(float(atom.b_iso))
+                    atom_counter += 1
+
+        row_count = len(atom_ids)
+        if row_count == 0:
+            return b""
+
+        ids_arr = np.array(atom_ids, dtype=np.int32)
+        seq_arr = np.array(seq_ids, dtype=np.int32)
+        xs_arr = np.array(xs, dtype=np.float32)
+        ys_arr = np.array(ys, dtype=np.float32)
+        zs_arr = np.array(zs, dtype=np.float32)
+        occ_arr = np.array(occupancies, dtype=np.float32)
+        b_arr = np.array(b_factors, dtype=np.float32)
+
+        columns: list[dict[str, object]] = [
+            {"name": "group_PDB", "data": _encode_string_array(group_pdb)},
+            {"name": "id", "data": _encode_numeric_array(ids_arr, 3)},
+            {"name": "type_symbol", "data": _encode_string_array(type_symbols)},
+            {"name": "label_atom_id", "data": _encode_string_array(atom_names)},
+            {"name": "label_alt_id", "data": _encode_string_array(["."] * row_count)},
+            {"name": "label_comp_id", "data": _encode_string_array(comp_ids)},
+            {"name": "label_asym_id", "data": _encode_string_array(asym_ids)},
+            {"name": "label_entity_id", "data": _encode_string_array(["1"] * row_count)},
+            {"name": "label_seq_id", "data": _encode_numeric_array(seq_arr, 3)},
+            {"name": "Cartn_x", "data": _encode_numeric_array(xs_arr, 32)},
+            {"name": "Cartn_y", "data": _encode_numeric_array(ys_arr, 32)},
+            {"name": "Cartn_z", "data": _encode_numeric_array(zs_arr, 32)},
+            {"name": "occupancy", "data": _encode_numeric_array(occ_arr, 32)},
+            {"name": "B_iso_or_equiv", "data": _encode_numeric_array(b_arr, 32)},
+            {"name": "auth_seq_id", "data": _encode_numeric_array(seq_arr, 3)},
+            {"name": "auth_comp_id", "data": _encode_string_array(comp_ids)},
+            {"name": "auth_asym_id", "data": _encode_string_array(asym_ids)},
+            {"name": "auth_atom_id", "data": _encode_string_array(atom_names)},
+        ]
+
+        header = self.structure.name if self.structure.name else "MONO_STRUCTURE"
+        bcif_payload: dict[str, object] = {
+            "encoder": "Mono-Gemmi v2.0",
+            "version": "0.3.0",
+            "dataBlocks": [
+                {
+                    "header": header,
+                    "categories": [
+                        {
+                            "name": "_entry",
+                            "rowCount": 1,
+                            "columns": [{"name": "id", "data": _encode_string_array([header])}],
+                        },
+                        {
+                            "name": "_atom_site",
+                            "rowCount": row_count,
+                            "columns": columns,
+                        },
+                    ],
+                }
+            ],
+        }
+
+        return msgpack.packb(bcif_payload, use_bin_type=True)
+
+    def get_atom_positions(self) -> npt.NDArray[np.float32]:
+        """Extrait les coordonnées spatiales 3D de tous les atomes en Angströms."""
+        if not self.structure or len(self.structure) == 0:
+            return np.zeros((0, 3), dtype=np.float32)
+
+        coords: list[tuple[float, float, float]] = []
+        model = self.structure[0]
+        for chain in model:
+            for res in chain:
+                for atom in res:
+                    coords.append((float(atom.pos.x), float(atom.pos.y), float(atom.pos.z)))
+
+        return np.array(coords, dtype=np.float32)
+
+    def update_positions(self, positions: npt.NDArray[np.float32]) -> None:
+        """Met à jour les coordonnées atomiques 3D en place (ex. depuis une trajectoire OpenMM)."""
+        if not self.structure or len(self.structure) == 0:
+            return
+
+        model = self.structure[0]
+        idx = 0
+        n_pos = len(positions)
+
+        for chain in model:
+            for res in chain:
+                for atom in res:
+                    if idx < n_pos:
+                        atom.pos = gemmi.Position(
+                            float(positions[idx, 0]),
+                            float(positions[idx, 1]),
+                            float(positions[idx, 2]),
+                        )
+                        idx += 1

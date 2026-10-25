@@ -15,6 +15,7 @@ from mono.providers.brep_build123d import BRepBuild123dProvider
 from mono.providers.bim_ifc import BimIfcProvider
 from mono.providers.textile_xpbd import TextileXpbdProvider
 from mono.providers.biomolecule_gemmi import BiomoleculeProvider
+from mono.providers.biomolecule_openmm import OpenMMSimulator, OpenMMSimulationResult, TrajectoryFrame
 from mono.providers.additive_slicer import AdditiveSlicerProvider
 from mono.providers.cam_machining import CamMachiningProvider, ToolDefinition, MachiningParameters
 from mono.security.ast_validator import SecurityViolationError
@@ -102,6 +103,16 @@ class BiomoleculeLoadRequest(BaseModel):
     mode: str = "ball_and_stick"
 
 
+class BiomoleculeSimulateRequest(BaseModel):
+    """Schéma de requête pour la dynamique moléculaire OpenMM."""
+
+    entity_id: str = "protein_001"
+    total_steps: int = 100
+    report_interval: int = 20
+    temperature_k: float = 300.0
+    time_step_fs: float = 2.0
+
+
 class SlicerAuditRequest(BaseModel):
     """Schéma de requête pour l'audit DfAM de fabrication additive."""
 
@@ -138,6 +149,7 @@ class ServerState:
     def __init__(self) -> None:
         self.doc: MonoDocument = MonoDocument()
         self.ipc: WebSocketIPCManager = WebSocketIPCManager()
+        self.active_simulations: dict[str, OpenMMSimulationResult] = {}
 
 
 state = ServerState()
@@ -343,6 +355,95 @@ def get_biomolecule_ramachandran(entity_id: str = "protein_001") -> dict[str, ob
             }
             for b in disulfides
         ],
+    }
+
+
+@app.get("/api/biomolecule/bcif")
+def get_biomolecule_bcif(entity_id: str = "protein_001") -> Response:
+    """Exporte la structure macromoléculaire au format binaire BinaryCIF (.bcif) pour Mol*."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité introuvable dans la scène.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, BiomoleculeProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas une biomolécule.")
+
+    bcif_bytes = rec.provider.serialize_binary_cif()
+    return Response(
+        content=bcif_bytes,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{entity_id}.bcif"'},
+    )
+
+
+@app.get("/api/biomolecule/cif")
+def get_biomolecule_cif(entity_id: str = "protein_001") -> Response:
+    """Exporte la structure au format standard mmCIF textuel."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité introuvable dans la scène.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, BiomoleculeProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas une biomolécule.")
+
+    cif_text = rec.provider.serialize_mmcif()
+    return Response(
+        content=cif_text,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{entity_id}.cif"'},
+    )
+
+
+@app.post("/api/biomolecule/simulate")
+def simulate_biomolecule(req: BiomoleculeSimulateRequest) -> dict[str, object]:
+    """Lance une simulation de dynamique moléculaire OpenMM sur une structure protéique."""
+    if req.entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail=f"Entité '{req.entity_id}' non trouvée.")
+
+    rec = state.doc.entities[req.entity_id]
+    if not isinstance(rec.provider, BiomoleculeProvider):
+        raise HTTPException(status_code=400, detail="L'entité n'est pas une macromolécule.")
+
+    pdb_text = rec.provider.serialize_native().decode("utf-8")
+    sim = OpenMMSimulator(
+        pdb_content=pdb_text,
+        temperature_k=req.temperature_k,
+        time_step_fs=req.time_step_fs,
+    )
+    sim.minimize_energy(max_iterations=30)
+    sim_result = sim.simulate(
+        total_steps=req.total_steps,
+        report_interval=req.report_interval,
+    )
+    state.active_simulations[req.entity_id] = sim_result
+    return sim_result.to_dict()
+
+
+@app.get("/api/biomolecule/trajectory/frame")
+def get_biomolecule_trajectory_frame(entity_id: str = "protein_001", frame_index: int = 0) -> dict[str, object]:
+    """Renvoie les coordonnées 3D et les métriques thermodynamiques d'une frame de trajectoire."""
+    if entity_id not in state.active_simulations:
+        raise HTTPException(status_code=404, detail=f"Aucune simulation active pour '{entity_id}'.")
+
+    sim_res = state.active_simulations[entity_id]
+    if frame_index < 0 or frame_index >= len(sim_res.frames):
+        raise HTTPException(status_code=400, detail=f"Index de frame {frame_index} hors bornes (0-{len(sim_res.frames)-1}).")
+
+    frame = sim_res.frames[frame_index]
+    if entity_id in state.doc.entities:
+        rec = state.doc.entities[entity_id]
+        if isinstance(rec.provider, BiomoleculeProvider):
+            rec.provider.update_positions(frame.positions)
+            rec.is_dirty = True
+
+    return {
+        "frame_index": frame.frame_index,
+        "time_ps": frame.time_ps,
+        "potential_energy_kj_mol": frame.potential_energy_kj_mol,
+        "kinetic_energy_kj_mol": frame.kinetic_energy_kj_mol,
+        "temperature_k": frame.temperature_k,
+        "rmsd_angstrom": frame.rmsd_angstrom,
+        "positions": frame.positions.tolist(),
     }
 
 
@@ -901,6 +1002,77 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                 "entity_id": eid,
                                 "solid_entity_id": solid_eid,
                             })
+
+            elif msg_type == "load_biomolecule":
+                eid = str(msg.get("entity_id", "protein_001"))
+                pdb_txt = str(msg.get("pdb_content", ""))
+                mode = str(msg.get("mode", "ball_and_stick"))
+                mode_str: Literal["ball_and_stick", "ribbon", "spheres", "sticks"] = (
+                    mode if mode in ("ball_and_stick", "ribbon", "spheres", "sticks") else "ball_and_stick"
+                )
+                provider = BiomoleculeProvider(pdb_content=pdb_txt if pdb_txt else None, mode=mode_str)
+                state.doc.entities[eid] = EntityRecord(
+                    entity_id=eid,
+                    provider_name="biomolecule_gemmi",
+                    scale_domain="nano",
+                    provider=provider,
+                    tags=["biology", "protein", "pdb"],
+                )
+                payloads = state.doc.collect_dirty_binary_payloads()
+                for payload in payloads:
+                    await state.ipc.broadcast_binary_mesh(payload)
+                await state.ipc.send_json(websocket, {
+                    "type": "biomolecule_loaded",
+                    "entity_id": eid,
+                    "chains": provider.get_chains(),
+                    "sequence": provider.get_sequence(),
+                })
+
+            elif msg_type == "step_biomolecule_dynamics":
+                eid = str(msg.get("entity_id", "protein_001"))
+                frame_idx = int(msg.get("frame_index", 0))
+                if eid in state.active_simulations and eid in state.doc.entities:
+                    sim_res = state.active_simulations[eid]
+                    if 0 <= frame_idx < len(sim_res.frames):
+                        frame = sim_res.frames[frame_idx]
+                        rec = state.doc.entities[eid]
+                        if isinstance(rec.provider, BiomoleculeProvider):
+                            rec.provider.update_positions(frame.positions)
+                            rec.is_dirty = True
+                            dirty_payloads = state.doc.collect_dirty_binary_payloads()
+                            for payload in dirty_payloads:
+                                await state.ipc.broadcast_binary_mesh(payload)
+                            await state.ipc.send_json(websocket, {
+                                "type": "biomolecule_stepped",
+                                "entity_id": eid,
+                                "frame_index": frame_idx,
+                                "time_ps": frame.time_ps,
+                                "rmsd_angstrom": frame.rmsd_angstrom,
+                                "potential_energy_kj_mol": frame.potential_energy_kj_mol,
+                            })
+
+            elif msg_type == "run_biomolecule_simulation":
+                eid = str(msg.get("entity_id", "protein_001"))
+                if eid in state.doc.entities:
+                    rec = state.doc.entities[eid]
+                    if isinstance(rec.provider, BiomoleculeProvider):
+                        pdb_text = rec.provider.serialize_native().decode("utf-8")
+                        sim = OpenMMSimulator(
+                            pdb_content=pdb_text,
+                            temperature_k=float(msg.get("temperature_k", 300.0)),
+                            time_step_fs=float(msg.get("time_step_fs", 2.0)),
+                        )
+                        sim.minimize_energy(max_iterations=20)
+                        sim_res = sim.simulate(
+                            total_steps=int(msg.get("total_steps", 100)),
+                            report_interval=int(msg.get("report_interval", 20)),
+                        )
+                        state.active_simulations[eid] = sim_res
+                        await state.ipc.send_json(websocket, {
+                            "type": "biomolecule_simulated",
+                            "entity_id": eid,
+                            "result": sim_res.to_dict(),
+                        })
 
     except WebSocketDisconnect:
         state.ipc.disconnect(websocket)

@@ -1,4 +1,5 @@
 import { CadViewport } from './viewport.ts';
+import { MolstarViewer } from './molstar_viewer.ts';
 
 interface ParameterDef {
   value: number;
@@ -40,6 +41,16 @@ class MonoApp {
   private isTextileRunning: boolean = false;
   private textileAnimationId: number | null = null;
   private statTextileStatus: HTMLElement | null = null;
+  private molstarViewer: MolstarViewer;
+  private activeView: 'cad' | 'molstar' = 'cad';
+  private isTrajectoryPlaying: boolean = false;
+  private trajectoryPlaybackTimer: number | null = null;
+  private totalTrajectoryFrames: number = 0;
+  private currentTrajectoryFrame: number = 0;
+  private statBioEnergy: HTMLElement | null = null;
+  private labelFrame: HTMLElement | null = null;
+  private labelRmsd: HTMLElement | null = null;
+  private sliderTrajectory: HTMLInputElement | null = null;
 
   constructor() {
     const canvas = document.getElementById('cad-canvas') as HTMLCanvasElement;
@@ -52,6 +63,11 @@ class MonoApp {
     this.statTriangles = document.getElementById('stat-triangles')!;
     this.statVertices = document.getElementById('stat-vertices')!;
     this.statTextileStatus = document.getElementById('stat-textile-status');
+    this.molstarViewer = new MolstarViewer('molstar-container');
+    this.statBioEnergy = document.getElementById('stat-bio-energy');
+    this.labelFrame = document.getElementById('label-frame');
+    this.labelRmsd = document.getElementById('label-rmsd');
+    this.sliderTrajectory = document.getElementById('slider-trajectory') as HTMLInputElement | null;
 
     this.setupUIHandlers();
     this.connectWebSocket();
@@ -181,6 +197,139 @@ class MonoApp {
         });
       });
     }
+
+    // --- Contrôles Biologie Moléculaire (Gemmi / Mol* / OpenMM) ---
+    const btnLoadProtein = document.getElementById('btn-load-protein');
+    if (btnLoadProtein) {
+      btnLoadProtein.addEventListener('click', () => {
+        this.sendMessage({
+          type: 'load_biomolecule',
+          entity_id: 'protein_001',
+          mode: 'ball_and_stick',
+        });
+      });
+    }
+
+    const btnToggleView = document.getElementById('btn-toggle-viewport-view');
+    const cadView = document.getElementById('cad-view');
+    const molstarView = document.getElementById('molstar-view');
+    const hudCamera = document.getElementById('hud-camera-mode');
+
+    if (btnToggleView && cadView && molstarView) {
+      btnToggleView.addEventListener('click', async () => {
+        if (this.activeView === 'cad') {
+          this.activeView = 'molstar';
+          cadView.style.display = 'none';
+          molstarView.style.display = 'block';
+          btnToggleView.textContent = '🔄 Vue CAO';
+          if (hudCamera) hudCamera.textContent = 'MOL* BIO-WEBGL';
+
+          await this.molstarViewer.init();
+          await this.molstarViewer.loadFromUrl('http://127.0.0.1:8000/api/biomolecule/bcif', 'bcif');
+        } else {
+          this.activeView = 'cad';
+          molstarView.style.display = 'none';
+          cadView.style.display = 'block';
+          btnToggleView.textContent = '🔄 Vue Mol*';
+          if (hudCamera) hudCamera.textContent = 'PERSPECTIVE / RTC FLOAT64';
+        }
+      });
+    }
+
+    const btnOpenmmSim = document.getElementById('btn-openmm-sim');
+    if (btnOpenmmSim) {
+      btnOpenmmSim.addEventListener('click', () => {
+        btnOpenmmSim.textContent = '⏳ OpenMM en cours...';
+        this.sendMessage({
+          type: 'run_biomolecule_simulation',
+          entity_id: 'protein_001',
+          total_steps: 100,
+          report_interval: 10,
+          temperature_k: 300.0,
+        });
+      });
+    }
+
+    const btnRamachandran = document.getElementById('btn-ramachandran');
+    if (btnRamachandran) {
+      btnRamachandran.addEventListener('click', async () => {
+        try {
+          const resp = await fetch('http://127.0.0.1:8000/api/biomolecule/ramachandran?entity_id=protein_001');
+          const data = (await resp.json()) as {
+            ramachandran_points: Array<{ res_name: string; res_num: number; phi: number; psi: number; region: string }>;
+            disulfide_bridges: Array<{ res1: number; res2: number; distance: number }>;
+          };
+          const count = data.ramachandran_points.length;
+          const disulf = data.disulfide_bridges.length;
+          alert(`Analyse de conformation Ramachandran :\n• Résidus analysés : ${count}\n• Ponts disulfures S-S : ${disulf}\n• Détail : ${data.ramachandran_points.map(p => `${p.res_name}${p.res_num}: φ=${p.phi}°, ψ=${p.psi}° [${p.region}]`).slice(0, 5).join('\n')}`);
+        } catch (err) {
+          alert(`Erreur Ramachandran : ${err}`);
+        }
+      });
+    }
+
+    if (this.sliderTrajectory) {
+      this.sliderTrajectory.addEventListener('input', () => {
+        if (!this.sliderTrajectory) return;
+        const frameIdx = parseInt(this.sliderTrajectory.value, 10);
+        this.currentTrajectoryFrame = frameIdx;
+        this.sendMessage({
+          type: 'step_biomolecule_dynamics',
+          entity_id: 'protein_001',
+          frame_index: frameIdx,
+        });
+      });
+    }
+
+    const btnPlayTraj = document.getElementById('btn-play-trajectory');
+    if (btnPlayTraj) {
+      btnPlayTraj.addEventListener('click', () => {
+        if (!this.isTrajectoryPlaying) {
+          if (this.totalTrajectoryFrames <= 1) {
+            alert('Veuillez d\'abord lancer une simulation OpenMM.');
+            return;
+          }
+          this.isTrajectoryPlaying = true;
+          btnPlayTraj.textContent = '⏸ Pause';
+          btnPlayTraj.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
+          this.playTrajectoryLoop();
+        } else {
+          this.isTrajectoryPlaying = false;
+          if (this.trajectoryPlaybackTimer !== null) {
+            clearInterval(this.trajectoryPlaybackTimer);
+            this.trajectoryPlaybackTimer = null;
+          }
+          btnPlayTraj.textContent = '▶ Lecture';
+          btnPlayTraj.style.background = '';
+        }
+      });
+    }
+
+    const btnDownloadBcif = document.getElementById('btn-download-bcif');
+    if (btnDownloadBcif) {
+      btnDownloadBcif.addEventListener('click', () => {
+        window.open('http://127.0.0.1:8000/api/biomolecule/bcif?entity_id=protein_001', '_blank');
+      });
+    }
+  }
+
+  private playTrajectoryLoop(): void {
+    this.trajectoryPlaybackTimer = window.setInterval(() => {
+      if (!this.isTrajectoryPlaying) return;
+      this.currentTrajectoryFrame = (this.currentTrajectoryFrame + 1) % this.totalTrajectoryFrames;
+      if (this.sliderTrajectory) {
+        this.sliderTrajectory.value = this.currentTrajectoryFrame.toString();
+      }
+      this.sendMessage({
+        type: 'step_biomolecule_dynamics',
+        entity_id: 'protein_001',
+        frame_index: this.currentTrajectoryFrame,
+      });
+
+      if (this.currentTrajectoryFrame === this.totalTrajectoryFrames - 1) {
+        // Fin de la boucle
+      }
+    }, 50); // 20 FPS pour la lecture fluide de dynamique moléculaire
   }
 
   private runTextileLoop(): void {
@@ -269,6 +418,55 @@ class MonoApp {
         btnFea.textContent = '⚡ Simulation FEA (CalculiX)';
       }
       alert(`Échec simulation FEA : ${msg.error}`);
+    } else if (msgType === 'biomolecule_loaded') {
+      const eid = msg.entity_id as string;
+      const chains = (msg.chains as string[]) || [];
+      const seq = (msg.sequence as string) || '';
+      console.log(`Biomolécule '${eid}' chargée avec succès. Chaînes: ${chains.join(', ')}, Séquence: ${seq}`);
+      if (this.statManifold) {
+        this.statManifold.textContent = `BIO (${chains.length} ch)`;
+        this.statManifold.className = 'stat-value highlight';
+      }
+    } else if (msgType === 'biomolecule_simulated') {
+      const btnOpenmm = document.getElementById('btn-openmm-sim');
+      if (btnOpenmm) {
+        btnOpenmm.textContent = '⚡ Dynamique OpenMM';
+      }
+      const res = msg.result as {
+        success: boolean;
+        method: string;
+        frame_count: number;
+        initial_energy_kj_mol: number;
+        final_energy_kj_mol: number;
+        mean_rmsd_angstrom: number;
+      };
+      if (res && res.success) {
+        this.totalTrajectoryFrames = res.frame_count;
+        if (this.sliderTrajectory) {
+          this.sliderTrajectory.max = Math.max(0, res.frame_count - 1).toString();
+          this.sliderTrajectory.value = '0';
+        }
+        if (this.statBioEnergy) {
+          this.statBioEnergy.textContent = `${res.final_energy_kj_mol.toFixed(1)} kJ/mol`;
+        }
+        if (this.labelRmsd) {
+          this.labelRmsd.textContent = `${res.mean_rmsd_angstrom.toFixed(2)} Å (moy)`;
+        }
+        console.log(`Simulation OpenMM réussie : méthode ${res.method}, ${res.frame_count} frames calculées.`);
+      }
+    } else if (msgType === 'biomolecule_stepped') {
+      const fIdx = msg.frame_index as number;
+      const rmsd = msg.rmsd_angstrom as number;
+      const energy = msg.potential_energy_kj_mol as number;
+      if (this.labelFrame) {
+        this.labelFrame.textContent = `Frame ${fIdx}`;
+      }
+      if (this.labelRmsd) {
+        this.labelRmsd.textContent = `${rmsd.toFixed(2)} Å`;
+      }
+      if (this.statBioEnergy) {
+        this.statBioEnergy.textContent = `${energy.toFixed(1)} kJ/mol`;
+      }
     }
   }
 

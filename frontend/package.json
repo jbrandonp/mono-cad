@@ -9,6 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "molstar": "^5.13.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "three": "^0.170.0"
   },
   "devDependencies": {

@@ -82,6 +82,44 @@
           </div>
         </section>
 
+        <!-- Section Atelier Biologie Moléculaire (Gemmi / Mol* / OpenMM) -->
+        <section class="panel-section">
+          <h2 class="section-title">Biologie Moléculaire (Mol* / OpenMM)</h2>
+          <div class="bio-controls" style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-load-protein" class="btn btn-primary" style="flex: 1; background: linear-gradient(135deg, #8b5cf6, #6d28d9);">
+                🧬 Charger Protéine
+              </button>
+              <button id="btn-toggle-viewport-view" class="btn btn-secondary btn-sm" style="flex: 1;">
+                🔄 Vue Mol*
+              </button>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-openmm-sim" class="btn btn-secondary btn-sm" style="flex: 1;">
+                ⚡ Dynamique OpenMM
+              </button>
+              <button id="btn-ramachandran" class="btn btn-secondary btn-sm" style="flex: 1;">
+                📊 Ramachandran
+              </button>
+            </div>
+            <div id="trajectory-controls" style="display: flex; flex-direction: column; gap: 4px; padding: 6px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+              <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                <span>Trajectoire : <span id="label-frame">Frame 0</span></span>
+                <span>RMSD : <span id="label-rmsd" class="highlight">0.00 Å</span></span>
+              </div>
+              <input type="range" id="slider-trajectory" min="0" max="0" value="0" step="1" style="width: 100%;" />
+              <div style="display: flex; gap: 6px; margin-top: 4px;">
+                <button id="btn-play-trajectory" class="btn btn-secondary btn-sm" style="flex: 1;">▶ Lecture</button>
+                <button id="btn-download-bcif" class="btn btn-secondary btn-sm" style="flex: 1;">💾 BinaryCIF</button>
+              </div>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Énergie Potentielle :</span>
+              <span id="stat-bio-energy" class="stat-value highlight">-- kJ/mol</span>
+            </div>
+          </div>
+        </section>
+
         <!-- Section Actions Rapides -->
         <section class="panel-section actions-section">
           <button id="btn-fea-simulate" class="btn btn-primary" style="margin-bottom: 8px;">
@@ -97,9 +135,14 @@
         </section>
       </aside>
 
-      <!-- Viewport 3D Principal Three.js -->
+      <!-- Viewport 3D Principal Three.js & Mol* -->
       <main id="viewport-container">
-        <canvas id="cad-canvas"></canvas>
+        <div id="cad-view" style="width: 100%; height: 100%;">
+          <canvas id="cad-canvas"></canvas>
+        </div>
+        <div id="molstar-view" style="display: none; width: 100%; height: 100%; position: absolute; inset: 0;">
+          <div id="molstar-container" style="width: 100%; height: 100%; position: absolute; inset: 0;"></div>
+        </div>
         <div id="viewport-overlay">
           <div class="viewport-hud">
             <span id="hud-camera-mode">PERSPECTIVE / RTC FLOAT64</span>
