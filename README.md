@@ -4,7 +4,7 @@
 ### **Environnement d'Ingénierie Multidisciplinaire Unifié Piloté par Intelligence Artificielle**
 #### *De la Macromolécule Atomique ($10^{-9}\text{ m}$) à l'Architecture Bâtiment ($10^{2}\text{ m}$)*
 
-[![Tests](https://img.shields.io/badge/tests-103%20passed-brightgreen?style=for-the-badge&logo=pytest)](file:///tests)
+[![Tests](https://img.shields.io/badge/tests-106%20passed-brightgreen?style=for-the-badge&logo=pytest)](file:///tests)
 [![Coverage](https://img.shields.io/badge/coverage-83%25-green?style=for-the-badge)](file:///src/mono)
 [![Python](https://img.shields.io/badge/python-3.12-blue?style=for-the-badge&logo=python)](pyproject.toml)
 [![TypeScript](https://img.shields.io/badge/typescript-5.9-3178C6?style=for-the-badge&logo=typescript)](frontend/src/main.ts)
@@ -442,7 +442,7 @@ Mono est distribué sous licence permissive libre (**Apache-2.0 / MIT**). Afin d
 
 ## 10. Validation de la Suite de Tests & Couverture
 
-La qualité mathématique et logicielle de l'ensemble de la plateforme est validée par une suite de **103 tests automatisés** exécutés nativement :
+La qualité mathématique et logicielle de l'ensemble de la plateforme est validée par une suite de **106 tests automatisés** exécutés nativement :
 
 ```bash
 uv run pytest --cov=src/mono --cov-report=term-missing
@@ -451,6 +451,7 @@ uv run pytest --cov=src/mono --cov-report=term-missing
 ### Résultats de Couverture par Fournisseur
 | Fichier & Module Métier | Lignes | Couverture | Rôle Testé |
 |---|---|---|---|
+| `scripts/vault_backup_sqlite.py`          | 265 | **100%**| Sauvegarde hybride & dump SQLite Vault |
 | `src/mono/providers/techdraw_drafting.py` | 403 | **98%** | Plans PDF ISO/ASME, cotation & GD&T |
 | `src/mono/providers/biomolecule_openmm.py`| 166 | **96%** | Dynamique moléculaire OpenMM |
 | `src/mono/providers/cam_machining.py`     | 329 | **95%** | Usinage CNC, G-code Fanuc & GRBL |
@@ -467,7 +468,7 @@ uv run pytest --cov=src/mono --cov-report=term-missing
 | `src/mono/agent/mac_orchestrator.py`      | 143 | **85%** | Boucle cybernétique multi-agents |
 | `src/mono/core/archive_mono.py`           | 202 | **86%** | Sérialisation conteneur `.mono` |
 | `src/mono/sketch/planegcs_solver.py`      | 276 | **82%** | Solveur d'esquisse 2D contrainte |
-| **TOTAL GLOBAL**                          | **5678** | **83%** | **103/103 tests passés (100% succès)** |
+| **TOTAL GLOBAL**                          | **5943** | **83%** | **106/106 tests passés (100% succès)** |
 
 ---
 
