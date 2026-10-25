@@ -311,6 +311,76 @@ class MonoApp {
         window.open('http://127.0.0.1:8000/api/biomolecule/bcif?entity_id=protein_001', '_blank');
       });
     }
+
+    // --- Contrôles FAO (CAM) & Impression 3D (Phase 8) ---
+    const btnGenerateCam = document.getElementById('btn-generate-cam');
+    const selectCamStrategy = document.getElementById('select-cam-strategy') as HTMLSelectElement | null;
+    const selectCamFlavor = document.getElementById('select-cam-flavor') as HTMLSelectElement | null;
+
+    if (btnGenerateCam) {
+      btnGenerateCam.addEventListener('click', () => {
+        const strat = selectCamStrategy ? selectCamStrategy.value : 'drop_cutter_surface';
+        btnGenerateCam.textContent = '⏳ Calcul FAO...';
+        this.sendMessage({
+          type: 'generate_cam_toolpath',
+          entity_id: 'part_001',
+          strategy: strat,
+          tool_diameter_mm: 10.0,
+          feedrate_mm_min: 3600.0,
+        });
+      });
+    }
+
+    const btnDownloadCamGcode = document.getElementById('btn-download-cam-gcode');
+    if (btnDownloadCamGcode) {
+      btnDownloadCamGcode.addEventListener('click', () => {
+        const flv = selectCamFlavor ? selectCamFlavor.value : 'fanuc';
+        window.open(`http://127.0.0.1:8000/api/cam/gcode?entity_id=part_001_cam_toolpath&flavor=${flv}`, '_blank');
+      });
+    }
+
+    const btnSliceAdditive = document.getElementById('btn-slice-additive');
+    if (btnSliceAdditive) {
+      btnSliceAdditive.addEventListener('click', () => {
+        btnSliceAdditive.textContent = '⏳ Tranchage 3D...';
+        this.sendMessage({
+          type: 'slice_additive_part',
+          entity_id: 'part_001',
+          layer_height_mm: 0.20,
+          infill_percent: 20,
+        });
+      });
+    }
+
+    const btnDownloadSlicerGcode = document.getElementById('btn-download-slicer-gcode');
+    if (btnDownloadSlicerGcode) {
+      btnDownloadSlicerGcode.addEventListener('click', () => {
+        window.open('http://127.0.0.1:8000/api/slicer/gcode?entity_id=part_001', '_blank');
+      });
+    }
+
+    const btnAuditDfam = document.getElementById('btn-audit-dfam');
+    if (btnAuditDfam) {
+      btnAuditDfam.addEventListener('click', async () => {
+        try {
+          const resp = await fetch('http://127.0.0.1:8000/api/slicer/audit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entity_id: 'part_001', max_overhang_angle_deg: 45.0, nozzle_diameter_mm: 0.4 }),
+          });
+          const data = (await resp.json()) as {
+            overhang_ratio: number;
+            max_overhang_deg: number;
+            fits_build_plate: boolean;
+            is_manufacturable: boolean;
+            warnings: string[];
+          };
+          alert(`Audit DfAM Fabrication Additive :\n• Conforme plateau : ${data.fits_build_plate ? 'OUI' : 'NON'}\n• Ratio surplombs : ${(data.overhang_ratio * 100).toFixed(1)}%\n• Angle max : ${data.max_overhang_deg}°\n• Fabricabilité : ${data.is_manufacturable ? 'CONFORME' : 'SUPPORTS REQUIS'}\n• Alertes : ${data.warnings.join('\n') || 'Aucune alerte'}`);
+        } catch (err) {
+          alert(`Erreur audit DfAM : ${err}`);
+        }
+      });
+    }
   }
 
   private playTrajectoryLoop(): void {
@@ -467,6 +537,27 @@ class MonoApp {
       if (this.statBioEnergy) {
         this.statBioEnergy.textContent = `${energy.toFixed(1)} kJ/mol`;
       }
+    } else if (msgType === 'cam_toolpath_generated') {
+      const btnGenerate = document.getElementById('btn-generate-cam');
+      if (btnGenerate) {
+        btnGenerate.textContent = '⚙️ Générer FAO';
+      }
+      const timeS = msg.estimated_machining_time_seconds as number;
+      const scallop = msg.scallop_height_um as number;
+      const statTime = document.getElementById('stat-cam-time');
+      const statScallop = document.getElementById('stat-cam-scallop');
+      if (statTime) statTime.textContent = `${timeS.toFixed(1)} s`;
+      if (statScallop) statScallop.textContent = `${scallop.toFixed(2)} µm`;
+      console.log(`Trajectoire FAO générée : ${msg.total_points} points, temps estimé : ${timeS}s`);
+    } else if (msgType === 'additive_part_sliced') {
+      const btnSlice = document.getElementById('btn-slice-additive');
+      if (btnSlice) {
+        btnSlice.textContent = '🖨️ Trancher 3D';
+      }
+      const mass = msg.estimated_mass_grams as number;
+      const statMass = document.getElementById('stat-slicer-mass');
+      if (statMass) statMass.textContent = `${mass.toFixed(2)} g`;
+      console.log(`Tranchage 3D terminé : ${msg.layer_count} couches, ${mass.toFixed(1)}g PLA`);
     }
   }
 

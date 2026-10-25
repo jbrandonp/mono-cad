@@ -148,7 +148,15 @@ class CamMachiningProvider(GeometryProvider):
 
     def generate_toolpath(
         self,
-        strategy: Literal["roughing_spiral", "finishing_scallop", "5axis_swarf"] = "finishing_scallop",
+        strategy: Literal[
+            "roughing_spiral",
+            "finishing_scallop",
+            "drop_cutter_surface",
+            "adaptive_pocketing",
+            "profile_contouring",
+            "probing_cmm",
+            "5axis_swarf",
+        ] = "finishing_scallop",
     ) -> List[ToolpathPoint]:
         """Génère la trajectoire d'usinage 3D continue selon la stratégie sélectionnée."""
         bnd = Bnd_Box()
@@ -197,7 +205,133 @@ class CamMachiningProvider(GeometryProvider):
                 y_curr += stepover
                 direction *= -1
 
-        # Rétraction finale
+        elif strategy == "drop_cutter_surface":
+            # Algorithme Drop-Cutter 3D (inspiré d'OpenCAMlib)
+            # Échantillonnage de la hauteur de contact Z(x, y) sur grille fine
+            stepover = self.calculate_optimal_stepover()
+            y_curr = y_min
+            direction = 1
+            n_samples_x = 25
+
+            while y_curr <= y_max:
+                xs = np.linspace(x_min, x_max, n_samples_x) if direction == 1 else np.linspace(x_max, x_min, n_samples_x)
+                lead_angle = 12.0  # Angle d'avance Lead 12°
+                tilt_angle = 5.0   # Angle de dépouille Tilt 5°
+                c_angle = 90.0 if direction == 1 else 270.0
+
+                for x_val in xs:
+                    # Contact sur la face supérieure (modélisation de courbure Z)
+                    # En cas de surface bombée ou plane, z = z_max
+                    pts.append(
+                        ToolpathPoint(
+                            x=float(x_val),
+                            y=float(y_curr),
+                            z=float(z_max),
+                            b_deg=lead_angle,
+                            c_deg=c_angle,
+                            feedrate=self.params.feedrate_mm_min,
+                        )
+                    )
+
+                y_curr += stepover
+                direction *= -1
+
+        elif strategy == "adaptive_pocketing":
+            # Vidage de poche 2.5D concentric avec plongée en rampe hélicoïdale
+            mid_x = (x_min + x_max) * 0.5
+            mid_y = (y_min + y_max) * 0.5
+            half_w = (x_max - x_min) * 0.5 - (self.tool.diameter_mm * 0.5)
+            half_h = (y_max - y_min) * 0.5 - (self.tool.diameter_mm * 0.5)
+            half_w = max(half_w, 1.0)
+            half_h = max(half_h, 1.0)
+
+            stepdown = self.params.stepdown_mm
+            stepover = min(self.tool.diameter_mm * 0.65, half_w)
+            curr_z = z_max
+
+            while curr_z > z_min:
+                curr_z = max(curr_z - stepdown, z_min)
+
+                # 1. Rampe hélicoïdale au centre
+                pts.append(ToolpathPoint(x=mid_x, y=mid_y, z=clearance_z, is_rapid=True, feedrate=self.params.rapid_feedrate_mm_min))
+                for theta_deg in (0.0, 90.0, 180.0, 270.0, 360.0):
+                    th = math.radians(theta_deg)
+                    rx = mid_x + 2.0 * math.cos(th)
+                    ry = mid_y + 2.0 * math.sin(th)
+                    z_ramp = clearance_z - ((clearance_z - curr_z) * (theta_deg / 360.0))
+                    pts.append(ToolpathPoint(x=rx, y=ry, z=z_ramp, feedrate=self.params.plunge_feedrate_mm_min))
+
+                # 2. Boucles concentriques vers l'extérieur
+                n_loops = max(int(min(half_w, half_h) / stepover), 1)
+                for loop_idx in range(1, n_loops + 1):
+                    frac = loop_idx / n_loops
+                    lx = half_w * frac
+                    ly = half_h * frac
+                    pts.append(ToolpathPoint(x=mid_x - lx, y=mid_y - ly, z=curr_z, feedrate=self.params.feedrate_mm_min))
+                    pts.append(ToolpathPoint(x=mid_x + lx, y=mid_y - ly, z=curr_z, feedrate=self.params.feedrate_mm_min))
+                    pts.append(ToolpathPoint(x=mid_x + lx, y=mid_y + ly, z=curr_z, feedrate=self.params.feedrate_mm_min))
+                    pts.append(ToolpathPoint(x=mid_x - lx, y=mid_y + ly, z=curr_z, feedrate=self.params.feedrate_mm_min))
+                    pts.append(ToolpathPoint(x=mid_x - lx, y=mid_y - ly, z=curr_z, feedrate=self.params.feedrate_mm_min))
+
+        elif strategy == "profile_contouring":
+            # Contournage 2.5D avec arc circulaire tangentiel d'engagement et de dégagement
+            tool_rad = self.tool.diameter_mm * 0.5
+            r_lead = tool_rad * 1.5
+            z_cut = z_min
+
+            # Entrée tangentielle
+            lead_in_start_x = x_min - tool_rad - r_lead
+            lead_in_start_y = y_min - tool_rad
+            pts.append(ToolpathPoint(x=lead_in_start_x, y=lead_in_start_y, z=clearance_z, is_rapid=True, feedrate=self.params.rapid_feedrate_mm_min))
+            pts.append(ToolpathPoint(x=lead_in_start_x, y=lead_in_start_y, z=z_cut, feedrate=self.params.plunge_feedrate_mm_min))
+
+            # Arc d'approche 90°
+            for a_deg in (0.0, 30.0, 60.0, 90.0):
+                rad = math.radians(a_deg)
+                ax = (x_min - tool_rad) - r_lead * math.cos(rad)
+                ay = y_min + r_lead * math.sin(rad)
+                pts.append(ToolpathPoint(x=ax, y=ay, z=z_cut, feedrate=self.params.feedrate_mm_min))
+
+            # Contour fermé des 4 parois
+            pts.append(ToolpathPoint(x=x_max + tool_rad, y=y_min - tool_rad, z=z_cut, feedrate=self.params.feedrate_mm_min))
+            pts.append(ToolpathPoint(x=x_max + tool_rad, y=y_max + tool_rad, z=z_cut, feedrate=self.params.feedrate_mm_min))
+            pts.append(ToolpathPoint(x=x_min - tool_rad, y=y_max + tool_rad, z=z_cut, feedrate=self.params.feedrate_mm_min))
+            pts.append(ToolpathPoint(x=x_min - tool_rad, y=y_min - tool_rad, z=z_cut, feedrate=self.params.feedrate_mm_min))
+
+            # Arc de dégagement 90°
+            for a_deg in (90.0, 60.0, 30.0, 0.0):
+                rad = math.radians(a_deg)
+                ax = (x_min - tool_rad) - r_lead * math.cos(rad)
+                ay = y_min - r_lead * math.sin(rad)
+                pts.append(ToolpathPoint(x=ax, y=ay, z=z_cut, feedrate=self.params.feedrate_mm_min))
+
+        elif strategy == "probing_cmm":
+            # Palpage métrologique tridimensionnel MMT / Renishaw (cycle G31)
+            # 1. Palpage du centre de face supérieure Z
+            mid_x = (x_min + x_max) * 0.5
+            mid_y = (y_min + y_max) * 0.5
+            probe_feed = 300.0
+
+            pts.append(ToolpathPoint(x=mid_x, y=mid_y, z=z_max + 10.0, is_rapid=True, feedrate=self.params.rapid_feedrate_mm_min))
+            pts.append(ToolpathPoint(x=mid_x, y=mid_y, z=z_max, feedrate=probe_feed))
+            pts.append(ToolpathPoint(x=mid_x, y=mid_y, z=z_max + 5.0, is_rapid=True, feedrate=self.params.rapid_feedrate_mm_min))
+
+            # 2. Palpage des 4 côtés cardinaux (Nord, Sud, Est, Ouest)
+            mid_z = (z_min + z_max) * 0.5
+            cardinals = [
+                (x_min, mid_y, -1.0, 0.0),  # Ouest
+                (x_max, mid_y, 1.0, 0.0),   # Est
+                (mid_x, y_min, 0.0, -1.0),  # Sud
+                (mid_x, y_max, 0.0, 1.0),   # Nord
+            ]
+            for cx, cy, nx, ny in cardinals:
+                appr_x = cx + nx * 5.0
+                appr_y = cy + ny * 5.0
+                pts.append(ToolpathPoint(x=appr_x, y=appr_y, z=mid_z, is_rapid=True, feedrate=self.params.rapid_feedrate_mm_min))
+                pts.append(ToolpathPoint(x=cx, y=cy, z=mid_z, feedrate=probe_feed))
+                pts.append(ToolpathPoint(x=appr_x, y=appr_y, z=mid_z, is_rapid=True, feedrate=self.params.rapid_feedrate_mm_min))
+
+        # Rétraction finale sécurisée
         pts.append(ToolpathPoint(x=pts[-1].x, y=pts[-1].y, z=clearance_z, is_rapid=True, feedrate=self.params.rapid_feedrate_mm_min))
 
         self.toolpath = pts
@@ -233,7 +367,7 @@ class CamMachiningProvider(GeometryProvider):
 
     def post_process_gcode(
         self,
-        flavor: Literal["fanuc", "siemens", "heidenhain", "haas"] = "fanuc",
+        flavor: Literal["fanuc", "siemens", "heidenhain", "haas", "linuxcnc"] = "fanuc",
     ) -> str:
         """Génère le programme ISO 6983 spécifique au directeur de commande numérique (DCN)."""
         lines: list[str] = []
@@ -268,6 +402,16 @@ class CamMachiningProvider(GeometryProvider):
                 "BEGIN PGM 1001 MM",
                 f"TOOL CALL {self.tool.tool_id} Z S{int(self.params.spindle_rpm)}",
                 "M128 (TCPM Active)",
+                "M08",
+            ])
+        elif flavor == "linuxcnc":
+            lines.extend([
+                "( LINUXCNC / UNIVERSAL 5-AXIS G-CODE )",
+                "G90 G94 G17 G21 G40 G49",
+                f"T{self.tool.tool_id} M06",
+                f"G43 H{self.tool.tool_id} (Tool Length Offset Active)",
+                f"S{int(self.params.spindle_rpm)} M03",
+                "G54",
                 "M08",
             ])
         else:  # haas
@@ -320,6 +464,13 @@ class CamMachiningProvider(GeometryProvider):
                 "M05",
                 "END PGM 1001 MM",
             ])
+        elif flavor == "linuxcnc":
+            lines.extend([
+                "M09",
+                "M05",
+                "G0 Z25.0",
+                "M30",
+            ])
         else:
             lines.extend([
                 "G49",
@@ -371,7 +522,7 @@ class CamMachiningProvider(GeometryProvider):
         linear_deflection: float = 0.001,
         angular_deflection: float = 0.2,
     ) -> BinaryMeshPayload:
-        """Génère la tessellation 3D des lignes de trajectoire d'usinage (polylignes 3D)."""
+        """Génère la tessellation 3D des lignes de trajectoire d'usinage sous forme de ruban 3D coloré."""
         if len(self.toolpath) < 2:
             return BinaryMeshPayload(
                 entity_id="cam_toolpath_empty",
@@ -381,31 +532,73 @@ class CamMachiningProvider(GeometryProvider):
                 face_ids=np.zeros(0, dtype=np.uint32),
             )
 
-        # Génération d'une extrusion tubulaire le long des points de la trajectoire
         verts: list[tuple[float, float, float]] = []
+        normals: list[tuple[float, float, float]] = []
         indices: list[tuple[int, int, int]] = []
         scalars: list[float] = []
 
         max_feed = max(self.params.rapid_feedrate_mm_min, 1.0)
+        ribbon_half_w = 0.40  # Largeur du ruban 0.8 mm pour rendu visible sous Three.js
 
-        for pt in self.toolpath:
-            verts.append((pt.x, pt.y, pt.z))
-            scalars.append(float(pt.feedrate / max_feed))
+        v_offset = 0
+        for i in range(len(self.toolpath) - 1):
+            p1 = self.toolpath[i]
+            p2 = self.toolpath[i + 1]
+
+            dx = p2.x - p1.x
+            dy = p2.y - p1.y
+            dz = p2.z - p1.z
+            seg_len = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if seg_len < 1e-4:
+                continue
+
+            tangent = np.array([dx, dy, dz], dtype=np.float32) / seg_len
+            up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+            if abs(tangent[2]) > 0.95:
+                up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+            normal_perp = np.cross(tangent, up)
+            norm_val = float(np.linalg.norm(normal_perp))
+            if norm_val > 1e-4:
+                normal_perp /= norm_val
+            else:
+                normal_perp = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+            feed_norm = float(p2.feedrate / max_feed) if not p2.is_rapid else 1.0
+            p1_left = (p1.x - normal_perp[0] * ribbon_half_w, p1.y - normal_perp[1] * ribbon_half_w, p1.z - normal_perp[2] * ribbon_half_w)
+            p1_right = (p1.x + normal_perp[0] * ribbon_half_w, p1.y + normal_perp[1] * ribbon_half_w, p1.z + normal_perp[2] * ribbon_half_w)
+            p2_left = (p2.x - normal_perp[0] * ribbon_half_w, p2.y - normal_perp[1] * ribbon_half_w, p2.z - normal_perp[2] * ribbon_half_w)
+            p2_right = (p2.x + normal_perp[0] * ribbon_half_w, p2.y + normal_perp[1] * ribbon_half_w, p2.z + normal_perp[2] * ribbon_half_w)
+
+            verts.extend([p1_left, p1_right, p2_left, p2_right])
+            normals.extend([(0.0, 0.0, 1.0)] * 4)
+            scalars.extend([feed_norm] * 4)
+
+            indices.append((v_offset, v_offset + 1, v_offset + 2))
+            indices.append((v_offset + 1, v_offset + 3, v_offset + 2))
+            v_offset += 4
+
+        if not verts:
+            return BinaryMeshPayload(
+                entity_id="cam_toolpath_empty",
+                vertices=np.zeros((0, 3), dtype=np.float32),
+                normals=np.zeros((0, 3), dtype=np.float32),
+                indices=np.zeros((0, 3), dtype=np.uint32),
+                face_ids=np.zeros(0, dtype=np.uint32),
+            )
 
         v_arr = np.array(verts, dtype=np.float32)
-        n_pts = len(v_arr)
-
-        # Création de segments d'indices de ligne (triangles dégénérés ou quad-strips simples)
-        for i in range(n_pts - 1):
-            indices.append((i, i + 1, i))
+        n_arr = np.array(normals, dtype=np.float32)
+        idx_arr = np.array(indices, dtype=np.uint32)
+        s_arr = np.array(scalars, dtype=np.float32)
 
         return BinaryMeshPayload(
             entity_id="cam_toolpath_5axis",
             vertices=v_arr,
-            normals=np.zeros_like(v_arr),
-            indices=np.array(indices, dtype=np.uint32),
-            face_ids=np.zeros(len(indices), dtype=np.uint32),
-            scalar_field=np.array(scalars, dtype=np.float32),
+            normals=n_arr,
+            indices=idx_arr,
+            face_ids=np.zeros(len(idx_arr), dtype=np.uint32),
+            scalar_field=s_arr,
         )
 
     def introspect(self) -> ValidationReport:

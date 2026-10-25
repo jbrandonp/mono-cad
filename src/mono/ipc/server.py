@@ -498,8 +498,19 @@ def slice_model_endpoint(req: SlicerSliceRequest) -> dict[str, object]:
         nozzle_temp_c=req.nozzle_temp_c,
         bed_temp_c=req.bed_temp_c,
     )
+
+    slicer_id = f"{req.entity_id}_slicer"
+    state.doc.entities[slicer_id] = EntityRecord(
+        entity_id=slicer_id,
+        provider_name="additive_slicer",
+        scale_domain="milli",
+        provider=slicer_prov,
+        tags=["slicer", "3dprint"],
+    )
+
     return {
         "entity_id": req.entity_id,
+        "slicer_entity_id": slicer_id,
         "layer_count": analysis.layer_count,
         "max_z_mm": analysis.max_z_mm,
         "filament_length_mm": analysis.filament_length_mm,
@@ -533,7 +544,16 @@ def generate_cam_toolpath(req: CamGenerateRequest) -> dict[str, object]:
         feedrate_mm_min=req.feedrate_mm_min,
         target_roughness_ra_um=req.target_roughness_ra_um,
     )
-    strat = req.strategy if req.strategy in ("roughing_spiral", "finishing_scallop", "5axis_swarf") else "finishing_scallop"
+    strat_valid = (
+        "roughing_spiral",
+        "finishing_scallop",
+        "drop_cutter_surface",
+        "adaptive_pocketing",
+        "profile_contouring",
+        "probing_cmm",
+        "5axis_swarf",
+    )
+    strat = req.strategy if req.strategy in strat_valid else "finishing_scallop"
     cam_prov = CamMachiningProvider(part=part, tool=tool, params=params)
     cam_prov.generate_toolpath(strategy=strat)
     audit = cam_prov.audit_cam()
@@ -563,7 +583,7 @@ def generate_cam_toolpath(req: CamGenerateRequest) -> dict[str, object]:
 
 @app.get("/api/cam/gcode")
 def get_cam_gcode(entity_id: str = "part_001_cam_toolpath", flavor: str = "fanuc") -> Response:
-    """Télécharge le programme G-code ISO 6983 post-processé (Fanuc, Siemens, Heidenhain, Haas)."""
+    """Télécharge le programme G-code ISO 6983 post-processé (Fanuc, Siemens, Heidenhain, Haas, LinuxCNC)."""
     if entity_id not in state.doc.entities:
         raise HTTPException(status_code=404, detail="Trajectoire FAO introuvable.")
 
@@ -572,9 +592,42 @@ def get_cam_gcode(entity_id: str = "part_001_cam_toolpath", flavor: str = "fanuc
         raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas une trajectoire FAO.")
 
     flv = flavor.lower()
-    flavor_literal = flv if flv in ("fanuc", "siemens", "heidenhain", "haas") else "fanuc"
+    flavor_valid = ("fanuc", "siemens", "heidenhain", "haas", "linuxcnc")
+    flavor_literal: Literal["fanuc", "siemens", "heidenhain", "haas", "linuxcnc"] = (
+        flv if flv in flavor_valid else "fanuc"
+    )
     gcode_text = rec.provider.post_process_gcode(flavor=flavor_literal)
-    return Response(content=gcode_text, media_type="text/plain")
+    return Response(
+        content=gcode_text,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{entity_id}_{flavor_literal}.nc"'},
+    )
+
+
+@app.get("/api/slicer/gcode")
+def get_slicer_gcode(entity_id: str = "part_001") -> Response:
+    """Télécharge le programme G-code FDM/SLA généré par le trancheur 3D."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité introuvable dans la scène.")
+
+    rec = state.doc.entities[entity_id]
+    if isinstance(rec.provider, AdditiveSlicerProvider):
+        gcode_text = rec.provider.cached_gcode
+    elif isinstance(rec.provider, BRepBuild123dProvider):
+        slicer = AdditiveSlicerProvider(part=rec.provider.part)
+        slicer.slice_to_gcode()
+        gcode_text = slicer.cached_gcode
+    else:
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas tranchable.")
+
+    if not gcode_text:
+        raise HTTPException(status_code=404, detail="Aucun G-code disponible, veuillez d'abord trancher la pièce.")
+
+    return Response(
+        content=gcode_text,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{entity_id}_print.gcode"'},
+    )
 
 
 @app.post("/api/ecip/execute")
@@ -1072,6 +1125,103 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             "type": "biomolecule_simulated",
                             "entity_id": eid,
                             "result": sim_res.to_dict(),
+                        })
+
+            elif msg_type == "generate_cam_toolpath":
+                eid = str(msg.get("entity_id", "part_001"))
+                if eid in state.doc.entities:
+                    rec = state.doc.entities[eid]
+                    part = getattr(rec.provider, "part", None)
+                    if part is not None:
+                        tool_diam = float(msg.get("tool_diameter_mm", 10.0))
+                        strat = str(msg.get("strategy", "drop_cutter_surface"))
+                        strat_valid = (
+                            "roughing_spiral",
+                            "finishing_scallop",
+                            "drop_cutter_surface",
+                            "adaptive_pocketing",
+                            "profile_contouring",
+                            "probing_cmm",
+                            "5axis_swarf",
+                        )
+                        chosen_strat: Literal[
+                            "roughing_spiral",
+                            "finishing_scallop",
+                            "drop_cutter_surface",
+                            "adaptive_pocketing",
+                            "profile_contouring",
+                            "probing_cmm",
+                            "5axis_swarf",
+                        ] = strat if strat in strat_valid else "drop_cutter_surface"  # type: ignore[assignment]
+
+                        tool = ToolDefinition(
+                            diameter_mm=tool_diam,
+                            length_mm=float(msg.get("tool_length_mm", 75.0)),
+                            corner_radius_mm=tool_diam * 0.5,
+                        )
+                        params = MachiningParameters(
+                            spindle_rpm=float(msg.get("spindle_rpm", 12000.0)),
+                            feedrate_mm_min=float(msg.get("feedrate_mm_min", 3600.0)),
+                        )
+                        cam_prov = CamMachiningProvider(part=part, tool=tool, params=params)
+                        cam_prov.generate_toolpath(strategy=chosen_strat)
+                        audit = cam_prov.audit_cam()
+
+                        toolpath_id = f"{eid}_cam_toolpath"
+                        state.doc.entities[toolpath_id] = EntityRecord(
+                            entity_id=toolpath_id,
+                            provider_name="cam_machining",
+                            scale_domain="milli",
+                            provider=cam_prov,
+                            tags=["cam", "toolpath", "5axis"],
+                        )
+                        dirty_payloads = state.doc.collect_dirty_binary_payloads()
+                        for payload in dirty_payloads:
+                            await state.ipc.broadcast_binary_mesh(payload)
+
+                        await state.ipc.send_json(websocket, {
+                            "type": "cam_toolpath_generated",
+                            "entity_id": eid,
+                            "toolpath_entity_id": toolpath_id,
+                            "strategy": chosen_strat,
+                            "total_points": audit.total_points,
+                            "toolpath_length_mm": audit.toolpath_length_mm,
+                            "estimated_machining_time_seconds": audit.estimated_machining_time_seconds,
+                            "scallop_height_um": audit.scallop_height_um,
+                            "is_collision_free": audit.is_collision_free,
+                        })
+
+            elif msg_type == "slice_additive_part":
+                eid = str(msg.get("entity_id", "part_001"))
+                if eid in state.doc.entities:
+                    rec = state.doc.entities[eid]
+                    part = getattr(rec.provider, "part", None)
+                    if part is not None:
+                        slicer = AdditiveSlicerProvider(part=part)
+                        analysis = slicer.slice_to_gcode(
+                            layer_height_mm=float(msg.get("layer_height_mm", 0.20)),
+                            infill_percent=int(msg.get("infill_percent", 20)),
+                        )
+                        slicer_id = f"{eid}_slicer"
+                        state.doc.entities[slicer_id] = EntityRecord(
+                            entity_id=slicer_id,
+                            provider_name="additive_slicer",
+                            scale_domain="milli",
+                            provider=slicer,
+                            tags=["slicer", "additive", "dfam"],
+                        )
+                        dirty_payloads = state.doc.collect_dirty_binary_payloads()
+                        for payload in dirty_payloads:
+                            await state.ipc.broadcast_binary_mesh(payload)
+
+                        await state.ipc.send_json(websocket, {
+                            "type": "additive_part_sliced",
+                            "entity_id": eid,
+                            "layer_count": analysis.layer_count,
+                            "filament_length_mm": analysis.filament_length_mm,
+                            "estimated_mass_grams": analysis.estimated_mass_grams,
+                            "estimated_time_seconds": analysis.estimated_time_seconds,
+                            "is_valid": analysis.is_valid,
                         })
 
     except WebSocketDisconnect:

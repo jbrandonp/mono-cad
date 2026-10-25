@@ -65,7 +65,7 @@ def test_toolpath_generation_and_audit() -> None:
 
 
 def test_post_processors_flavors() -> None:
-    """Vérifie la syntaxe des post-processeurs Fanuc, Siemens et Heidenhain."""
+    """Vérifie la syntaxe des post-processeurs Fanuc, Siemens, Heidenhain, Haas et LinuxCNC."""
     box = bd.Box(30, 30, 15)
     provider = CamMachiningProvider(part=box)
 
@@ -84,6 +84,43 @@ def test_post_processors_flavors() -> None:
     heidenhain_code = provider.post_process_gcode(flavor="heidenhain")
     assert "M128" in heidenhain_code
     assert "M129" in heidenhain_code
+
+    # Haas NGC : G234 TCPC et G49
+    haas_code = provider.post_process_gcode(flavor="haas")
+    assert "G234" in haas_code
+    assert "G49" in haas_code
+
+    # LinuxCNC : M6 G43
+    linuxcnc_code = provider.post_process_gcode(flavor="linuxcnc")
+    assert "LINUXCNC" in linuxcnc_code or "LinuxCNC" in linuxcnc_code
+    assert "G43 H1" in linuxcnc_code
+
+
+def test_cam_strategies_drop_cutter_pocket_profile_probe() -> None:
+    """Vérifie l'exécution des stratégies avancées : Drop-Cutter, Évidement, Profilage et Palpage."""
+    box = bd.Box(40, 40, 20)
+    provider = CamMachiningProvider(part=box)
+
+    # 1. Drop-Cutter 3D avec angles d'attaque (Lead) et d'inclinaison (Tilt)
+    dc_pts = provider.generate_toolpath(strategy="drop_cutter_surface")
+    assert len(dc_pts) > 10
+    # Vérifie que les angles B et C ont été calculés pour éviter la coupe à vitesse nulle au centre
+    assert any(pt.b_deg != 0.0 or pt.c_deg != 0.0 for pt in dc_pts)
+
+    # 2. Évidement 2.5D (Adaptive Pocketing) avec rampe hélicoïdale
+    pocket_pts = provider.generate_toolpath(strategy="adaptive_pocketing")
+    assert len(pocket_pts) > 10
+    # Vérifie la présence de points de plongée hélicoïdale
+    z_coords = [pt.z for pt in pocket_pts]
+    assert min(z_coords) < 0.0
+
+    # 3. Profilage 2.5D avec engagement/dégagement tangentiel en arc de cercle
+    profile_pts = provider.generate_toolpath(strategy="profile_contouring")
+    assert len(profile_pts) >= 8
+
+    # 4. Palpage CMM de métrologie
+    probe_pts = provider.generate_toolpath(strategy="probing_cmm")
+    assert len(probe_pts) >= 3
 
 
 def test_geometry_provider_contract() -> None:
@@ -130,10 +167,10 @@ async def test_cam_api_endpoints() -> None:
     )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        # 1. Génération trajectoire
+        # 1. Génération trajectoire Drop-Cutter
         res_cam = await client.post("/api/cam/generate", json={
             "entity_id": "box_for_cam",
-            "strategy": "finishing_scallop",
+            "strategy": "drop_cutter_surface",
             "target_roughness_ra_um": 0.8,
         })
         assert res_cam.status_code == 200
@@ -142,9 +179,14 @@ async def test_cam_api_endpoints() -> None:
         assert data_cam["is_collision_free"] is True
         toolpath_id = data_cam["toolpath_entity_id"]
 
-        # 2. Export G-code
+        # 2. Export G-code Siemens
         res_gcode = await client.get(f"/api/cam/gcode?entity_id={toolpath_id}&flavor=siemens")
         assert res_gcode.status_code == 200
         gcode_txt = res_gcode.text
         assert "TRAORI" in gcode_txt
         assert "TRAFOOF" in gcode_txt
+
+        # 3. Export G-code Haas NGC
+        res_haas = await client.get(f"/api/cam/gcode?entity_id={toolpath_id}&flavor=haas")
+        assert res_haas.status_code == 200
+        assert "G234" in res_haas.text

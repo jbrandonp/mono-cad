@@ -119,3 +119,10 @@ async def test_slicer_api_endpoints() -> None:
         data_slice = res_slice.json()
         assert data_slice["is_valid"] is True
         assert data_slice["layer_count"] > 0
+        slicer_entity_id = data_slice["slicer_entity_id"]
+
+        # Téléchargement G-code fabrication additive
+        res_gcode = await client.get(f"/api/slicer/gcode?entity_id={slicer_entity_id}")
+        assert res_gcode.status_code == 200
+        assert "G28" in res_gcode.text
+        assert "M104" in res_gcode.text or "M109" in res_gcode.text

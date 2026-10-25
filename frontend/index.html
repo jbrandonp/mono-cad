@@ -120,6 +120,72 @@
           </div>
         </section>
 
+        <!-- Section Atelier FAO (CAM) & Impression 3D -->
+        <section class="panel-section">
+          <h2 class="section-title">FAO (CAM) & Impression 3D</h2>
+          <div class="cam-controls" style="display: flex; flex-direction: column; gap: 8px;">
+            <!-- Sélecteur de stratégie d'usinage -->
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 11px; color: var(--text-muted);">Stratégie d'usinage :</label>
+              <select id="select-cam-strategy" style="background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px; border-radius: 4px; font-size: 12px;">
+                <option value="drop_cutter_surface">Drop-Cutter 3D (OpenCAMlib)</option>
+                <option value="finishing_scallop">Finition Crête Constante (Scallop)</option>
+                <option value="adaptive_pocketing">Ébauche Adaptative (2.5D)</option>
+                <option value="profile_contouring">Contournage avec Rayon (2.5D)</option>
+                <option value="probing_cmm">Palpage Métrologique (CMM)</option>
+                <option value="5axis_swarf">Flanc 5-Axes (Swarf)</option>
+              </select>
+            </div>
+
+            <!-- Sélecteur de DCN / Post-Processeur -->
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 11px; color: var(--text-muted);">Post-Processeur DCN :</label>
+              <select id="select-cam-flavor" style="background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); padding: 5px; border-radius: 4px; font-size: 12px;">
+                <option value="fanuc">Fanuc 31i (G43.4 RTCP)</option>
+                <option value="siemens">Siemens 840D (TRAORI)</option>
+                <option value="heidenhain">Heidenhain TNC 640 (M128)</option>
+                <option value="haas">Haas NGC (G234 TCPC)</option>
+                <option value="linuxcnc">LinuxCNC / GRBL (Universel)</option>
+              </select>
+            </div>
+
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-generate-cam" class="btn btn-primary" style="flex: 1; background: linear-gradient(135deg, #f59e0b, #d97706);">
+                ⚙️ Générer FAO
+              </button>
+              <button id="btn-download-cam-gcode" class="btn btn-secondary btn-sm" style="flex: 1;">
+                💾 G-Code CNC
+              </button>
+            </div>
+
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-slice-additive" class="btn btn-primary" style="flex: 1; background: linear-gradient(135deg, #06b6d4, #0891b2);">
+                🖨️ Trancher 3D
+              </button>
+              <button id="btn-download-slicer-gcode" class="btn btn-secondary btn-sm" style="flex: 1;">
+                💾 G-Code 3D
+              </button>
+            </div>
+
+            <button id="btn-audit-dfam" class="btn btn-secondary btn-sm">
+              🔍 Audit DfAM (Surplombs)
+            </button>
+
+            <div class="stat-row">
+              <span class="stat-label">Temps usinage :</span>
+              <span id="stat-cam-time" class="stat-value highlight">-- s</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Hauteur crête :</span>
+              <span id="stat-cam-scallop" class="stat-value">-- µm</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Masse matière 3D :</span>
+              <span id="stat-slicer-mass" class="stat-value">-- g</span>
+            </div>
+          </div>
+        </section>
+
         <!-- Section Actions Rapides -->
         <section class="panel-section actions-section">
           <button id="btn-fea-simulate" class="btn btn-primary" style="margin-bottom: 8px;">
