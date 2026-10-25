@@ -8,6 +8,8 @@ from pydantic import BaseModel
 
 from mono.core.document import MonoDocument
 from mono.ipc.websocket_manager import WebSocketIPCManager
+from mono.agent.cadengbench_gates import CADEngBenchGatekeeper, GateEvaluationResult
+from mono.agent.mac_orchestrator import MACOrchestrator, MockLLMProvider, MACExecutionResult
 from mono.execution.ecip_executor import execute_ecip_cad_block, ECIPExecutionError
 from mono.providers.brep_build123d import BRepBuild123dProvider
 from mono.security.ast_validator import SecurityViolationError
@@ -27,6 +29,20 @@ class ParameterUpdateRequest(BaseModel):
     """Schéma de requête pour la modification d'un curseur paramétrique."""
 
     value: float
+
+
+class GateEvaluationRequest(BaseModel):
+    """Schéma de requête pour l'audit des portes déterministes CADEngBench."""
+
+    entity_id: str
+    target_dimensions: dict[str, float] | None = None
+
+
+class AgentRunRequest(BaseModel):
+    """Schéma de requête pour l'exécution de la boucle d'agent MAC."""
+
+    prompt: str
+    max_iterations: int = 8
 
 
 class ServerState:
@@ -134,6 +150,12 @@ def execute_ecip(req: ECIPExecuteRequest) -> dict[str, object]:
         provider_name="brep_build123d",
         scale_domain="milli",
     )
+    state.doc.attach_parametric_source(
+        entity_id=req.entity_id,
+        script_code=req.script_code,
+        bound_parameters=list(result.parameters.keys()),
+        scale_to_meters=req.scale_to_meters,
+    )
 
     return {
         "entity_id": req.entity_id,
@@ -154,6 +176,51 @@ def update_parameter(name: str, req: ParameterUpdateRequest) -> dict[str, object
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return {"status": "updated", "name": name, "value": state.doc.parameters[name].value}
+
+
+@app.post("/api/gates/evaluate")
+def evaluate_gates(req: GateEvaluationRequest) -> dict[str, object]:
+    """Évalue les 4 portes déterministes CADEngBench (L0–L2) sur une entité."""
+    if req.entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail=f"Entité '{req.entity_id}' introuvable dans la scène.")
+
+    ent = state.doc.entities[req.entity_id]
+    part = getattr(ent.provider, "_part", None)
+    if part is None:
+        raise HTTPException(status_code=400, detail=f"L'entité '{req.entity_id}' ne possède pas de géométrie B-Rep valide.")
+
+    base_params = {p: state.doc.parameters[p].value for p in ent.bound_parameters if p in state.doc.parameters}
+    res = CADEngBenchGatekeeper.evaluate(
+        entity_id=req.entity_id,
+        part=part,
+        target_dimensions=req.target_dimensions,
+        script_code=ent.script_code,
+        base_params=base_params,
+        doc=state.doc,
+    )
+    return res.to_dict()
+
+
+@app.post("/api/agent/run")
+async def run_agent(req: AgentRunRequest) -> dict[str, object]:
+    """Exécute l'orchestrateur cybernétique Multi-Agents CAD (MAC) en 5 étapes."""
+    orchestrator = MACOrchestrator(
+        llm_provider=MockLLMProvider(),
+        history=state.doc.history,
+    )
+    result = await orchestrator.run(
+        user_prompt=req.prompt,
+        doc=state.doc,
+        max_iterations=req.max_iterations,
+    )
+
+    # Si succès, diffusion immédiate des nouveaux maillages binaires
+    if result.success:
+        payloads = state.doc.collect_dirty_binary_payloads()
+        for payload in payloads:
+            await state.ipc.broadcast_binary_mesh(payload)
+
+    return result.to_dict()
 
 
 @app.websocket("/ws")
@@ -192,6 +259,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 p_val = float(msg.get("value", 0.0))
                 if p_name in state.doc.parameters:
                     state.doc.update_parameter(p_name, p_val)
+                    # Diffusion immédiate des maillages recalculés par re-tessellation B-Rep (< 50 ms)
+                    payloads = state.doc.collect_dirty_binary_payloads()
+                    for payload in payloads:
+                        await state.ipc.broadcast_binary_mesh(payload)
+
                     await state.ipc.broadcast_json({
                         "type": "param_updated",
                         "name": p_name,
@@ -208,6 +280,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     result = execute_ecip_cad_block(script_code, param_overrides=param_dict)
                     provider = BRepBuild123dProvider(entity_id=entity_id, part=result.part)
                     state.doc.add_entity(entity_id, provider)
+                    state.doc.attach_parametric_source(
+                        entity_id=entity_id,
+                        script_code=script_code,
+                        bound_parameters=list(result.parameters.keys()),
+                    )
 
                     # Transmission des maillages binaires
                     payloads = state.doc.collect_dirty_binary_payloads()
@@ -233,6 +310,28 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             elif msg_type == "redo":
                 state.doc.history.redo()
                 await state.ipc.broadcast_json({"type": "redo_performed", "can_redo": state.doc.history.can_redo})
+
+            elif msg_type == "run_agent":
+                prompt_text = str(msg.get("prompt", ""))
+                max_iter = int(msg.get("max_iterations", 8))
+                orchestrator = MACOrchestrator(
+                    llm_provider=MockLLMProvider(),
+                    history=state.doc.history,
+                )
+                agent_res = await orchestrator.run(
+                    user_prompt=prompt_text,
+                    doc=state.doc,
+                    max_iterations=max_iter,
+                )
+                if agent_res.success:
+                    dirty_payloads = state.doc.collect_dirty_binary_payloads()
+                    for payload in dirty_payloads:
+                        await state.ipc.broadcast_binary_mesh(payload)
+
+                await state.ipc.send_json(websocket, {
+                    "type": "agent_result",
+                    "result": agent_res.to_dict(),
+                })
 
     except WebSocketDisconnect:
         state.ipc.disconnect(websocket)

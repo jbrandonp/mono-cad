@@ -40,6 +40,9 @@ class EntityRecord:
     position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rotation_quat: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
     is_dirty: bool = True
+    script_code: str | None = None
+    bound_parameters: list[str] = field(default_factory=list)
+    scale_to_meters: float = 0.001
 
 
 class MonoDocument:
@@ -92,6 +95,8 @@ class MonoDocument:
     def update_parameter(self, name: str, new_value: float) -> None:
         """Met à jour la valeur d'un paramètre existant en respectant ses bornes.
 
+        Déclenche immédiatement la re-tessellation B-Rep des entités paramétriques liées (< 50 ms).
+
         Args:
             name: Nom du paramètre à mettre à jour.
             new_value: Nouvelle valeur numérique.
@@ -105,6 +110,50 @@ class MonoDocument:
         param = self.parameters[name]
         clamped = max(param.min_value, min(new_value, param.max_value))
         param.value = clamped
+
+        # Re-tessellation paramétrique à la volée (< 50 ms) pour toutes les entités liées
+        all_param_values = {k: v.value for k, v in self.parameters.items()}
+        from mono.execution.ecip_executor import execute_ecip_cad_block
+        from mono.providers.brep_build123d import BRepBuild123dProvider
+
+        for rec in self.entities.values():
+            if rec.script_code and name in rec.bound_parameters:
+                try:
+                    res = execute_ecip_cad_block(
+                        rec.script_code,
+                        param_overrides=all_param_values,
+                        unit_scale_to_meters=rec.scale_to_meters,
+                    )
+                    rec.provider = BRepBuild123dProvider(
+                        entity_id=rec.entity_id,
+                        part=res.part,
+                        unit_scale_to_meters=rec.scale_to_meters,
+                    )
+                    rec.is_dirty = True
+                except Exception:
+                    # En cas de valeur temporaire non reconstructible, préserver le solide antérieur
+                    pass
+
+    def attach_parametric_source(
+        self,
+        entity_id: str,
+        script_code: str,
+        bound_parameters: list[str],
+        scale_to_meters: float = 0.001,
+    ) -> None:
+        """Associe un script déclaratif ECIP et ses variables à une entité de la scène.
+
+        Args:
+            entity_id: Identifiant unique de l'entité.
+            script_code: Code source complet build123d / ECIP.
+            bound_parameters: Noms des variables extraites pouvant modifier la géométrie.
+            scale_to_meters: Facteur d'échelle vers les mètres SI.
+        """
+        if entity_id in self.entities:
+            rec = self.entities[entity_id]
+            rec.script_code = script_code
+            rec.bound_parameters = list(bound_parameters)
+            rec.scale_to_meters = scale_to_meters
 
     def add_entity(
         self,

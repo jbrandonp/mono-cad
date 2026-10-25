@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 import pytest
 from mono.sketch.planegcs_solver import (
     PlaneGCSSketch,
@@ -53,6 +54,19 @@ def test_planegcs_rectangle_solve() -> None:
     # Conversion en face build123d
     face = sketch.to_build123d_face()
     assert abs(float(face.area) - 1000.0) < 1.0  # 50 x 20 = 1000 mm²
+
+    # Test export DXF et SVG
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as f_dxf:
+        dxf_path = f_dxf.name
+    try:
+        sketch.export_dxf(dxf_path)
+        assert Path(dxf_path).stat().st_size > 0
+    finally:
+        Path(dxf_path).unlink(missing_ok=True)
+
+    svg_str = sketch.export_svg()
+    assert "<svg" in svg_str and "</svg>" in svg_str
 
 
 def test_planegcs_under_constrained_dof() -> None:

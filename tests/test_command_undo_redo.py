@@ -77,3 +77,29 @@ def test_command_history_undo_redo() -> None:
     history.redo()
     assert data["counter"] == 20
     assert not history.can_redo
+
+
+def test_set_param_command_undo_redo() -> None:
+    """Vérifie la commande réversible SetParamCommand sur un dictionnaire de paramètres."""
+    from mono.core.command import SetParamCommand
+
+    class FakeEntity:
+        def __init__(self) -> None:
+            self.parameters = {"width": 50.0}
+
+    ent = FakeEntity()
+    history = CommandHistory()
+
+    cmd = SetParamCommand(ent, "width", 75.0)
+    assert "width = 75.0" in cmd.description
+    history.execute(cmd)
+    assert ent.parameters["width"] == 75.0
+
+    # Undo
+    history.undo()
+    assert ent.parameters["width"] == 50.0
+
+    # Redo
+    history.redo()
+    assert ent.parameters["width"] == 75.0
+

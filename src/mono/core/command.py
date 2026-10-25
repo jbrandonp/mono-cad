@@ -116,3 +116,77 @@ class CommandHistory:
         """Vide l'ensemble des piles de transactions."""
         self._undo_stack.clear()
         self._redo_stack.clear()
+
+
+class SetParamCommand(Command):
+    """Commande transactionnelle modifiant un paramètre avec historisation réversible."""
+
+    def __init__(
+        self,
+        target_obj: object,
+        param_name: str,
+        new_value: float,
+        extra_val: float | None = None,
+    ) -> None:
+        if extra_val is not None:
+            # Appel sous forme (doc, entity_id, param_name, new_value)
+            self._target: object = target_obj
+            self._entity_id: str | None = param_name
+            self._param_name: str = str(new_value)
+            self._new_val: float = float(extra_val)
+        else:
+            self._target = target_obj
+            self._entity_id = None
+            self._param_name = param_name
+            self._new_val = float(new_value)
+        self._old_val: float = 0.0
+
+    @property
+    def description(self) -> str:
+        return f"Mise à jour paramètre {self._param_name} = {self._new_val}"
+
+    def execute(self) -> None:
+        target_dict = None
+        if self._entity_id and hasattr(self._target, "entities"):
+            entities = getattr(self._target, "entities")
+            if isinstance(entities, dict) and self._entity_id in entities:
+                ent = entities[self._entity_id]
+                if hasattr(ent, "parameters") and isinstance(ent.parameters, dict):
+                    target_dict = ent.parameters
+        elif hasattr(self._target, "parameters") and isinstance(self._target.parameters, dict):
+            target_dict = self._target.parameters
+
+        if target_dict is not None:
+            entry = target_dict.get(self._param_name)
+            if hasattr(entry, "value"):
+                self._old_val = float(entry.value)
+                entry.value = self._new_val
+            elif isinstance(entry, (int, float)):
+                self._old_val = float(entry)
+                target_dict[self._param_name] = self._new_val
+            else:
+                self._old_val = 0.0
+                target_dict[self._param_name] = self._new_val
+
+    def undo(self) -> None:
+        target_dict = None
+        if self._entity_id and hasattr(self._target, "entities"):
+            entities = getattr(self._target, "entities")
+            if isinstance(entities, dict) and self._entity_id in entities:
+                ent = entities[self._entity_id]
+                if hasattr(ent, "parameters") and isinstance(ent.parameters, dict):
+                    target_dict = ent.parameters
+        elif hasattr(self._target, "parameters") and isinstance(self._target.parameters, dict):
+            target_dict = self._target.parameters
+
+        if target_dict is not None:
+            entry = target_dict.get(self._param_name)
+            if hasattr(entry, "value"):
+                entry.value = self._old_val
+            else:
+                target_dict[self._param_name] = self._old_val
+
+    def redo(self) -> None:
+        self.execute()
+
+

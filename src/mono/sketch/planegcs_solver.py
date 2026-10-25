@@ -3,9 +3,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 import numpy as np
 import scipy.linalg
 import build123d as bd
+import ezdxf
 
 
 class ConstraintType(Enum):
@@ -390,3 +392,89 @@ class PlaneGCSSketch:
             raise ValueError("Le profil d'esquisse n'est pas fermé.")
 
         return bd.Face(wire)
+
+    def export_dxf(self, output_path: str) -> None:
+        """Exporte l'esquisse 2D contrainte au format standard DXF pour la découpe CNC/Laser.
+
+        Args:
+            output_path: Chemin du fichier de destination .dxf.
+        """
+        doc = ezdxf.new("R2010")
+        msp = doc.modelspace()
+
+        # Export des segments
+        for seg in self.segments.values():
+            p1 = self.points[seg.start_point_id]
+            p2 = self.points[seg.end_point_id]
+            msp.add_line((p1.x, p1.y), (p2.x, p2.y))
+
+        # Export des cercles
+        for circ in self.circles.values():
+            c = self.points[circ.center_point_id]
+            msp.add_circle((c.x, c.y), circ.radius)
+
+        out_file = Path(output_path)
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        doc.saveas(str(out_file))
+
+    def export_svg(self, output_path: str | None = None) -> str:
+        """Génère une représentation vectorielle SVG de l'esquisse 2D avec ses cotes.
+
+        Args:
+            output_path: Chemin optionnel d'enregistrement.
+
+        Returns:
+            str: Contenu textuel XML du fichier SVG.
+        """
+        if not self.points:
+            return '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"></svg>'
+
+        xs = [p.x for p in self.points.values()]
+        ys = [p.y for p in self.points.values()]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        w = max(10.0, max_x - min_x)
+        h = max(10.0, max_y - min_y)
+        margin = max(w, h) * 0.2
+
+        view_x = min_x - margin
+        view_y = min_y - margin
+        view_w = w + 2.0 * margin
+        view_h = h + 2.0 * margin
+
+        svg_lines: list[str] = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_x} {view_y} {view_w} {view_h}" width="600" height="600">',
+            '  <rect width="100%" height="100%" fill="#12151c"/>',
+        ]
+
+        # Segments
+        for seg in self.segments.values():
+            p1 = self.points[seg.start_point_id]
+            p2 = self.points[seg.end_point_id]
+            svg_lines.append(
+                f'  <line x1="{p1.x}" y1="{-p1.y}" x2="{p2.x}" y2="{-p2.y}" stroke="#00d2ff" stroke-width="1.5"/>'
+            )
+
+        # Cercles
+        for circ in self.circles.values():
+            c = self.points[circ.center_point_id]
+            svg_lines.append(
+                f'  <circle cx="{c.x}" cy="{-c.y}" r="{circ.radius}" stroke="#3b82f6" fill="none" stroke-width="1.5"/>'
+            )
+
+        # Sommets
+        for pid, pt in self.points.items():
+            color = "#ef4444" if pt.is_fixed else "#10b981"
+            svg_lines.append(
+                f'  <circle cx="{pt.x}" cy="{-pt.y}" r="2" fill="{color}"/>'
+            )
+
+        svg_lines.append('</svg>')
+        svg_content = "\n".join(svg_lines)
+
+        if output_path:
+            out_file = Path(output_path)
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_text(svg_content, encoding="utf-8")
+
+        return svg_content

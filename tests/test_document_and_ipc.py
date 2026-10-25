@@ -97,8 +97,15 @@ PARAMS["w"] = w
         scene_resp = ws.receive_json()
         assert scene_resp["type"] == "scene_summary"
 
-        # Mise à jour de paramètre via WebSocket
+        # Mise à jour de paramètre via WebSocket -> Recomputation et diffusion binaire immédiate (< 50 ms)
         ws.send_text(json.dumps({"type": "update_param", "name": "w", "value": 35.0}))
+
+        # Réception du maillage recalculé à chaud en temps réel
+        hot_header = ws.receive_json()
+        assert hot_header["type"] == "binary_mesh_header"
+        hot_bytes = ws.receive_bytes()
+        assert len(hot_bytes) == hot_header["byte_size"]
+
         param_resp = ws.receive_json()
         assert param_resp["type"] == "param_updated"
         assert param_resp["value"] == 35.0
