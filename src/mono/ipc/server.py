@@ -15,6 +15,8 @@ from mono.providers.brep_build123d import BRepBuild123dProvider
 from mono.providers.bim_ifc import BimIfcProvider
 from mono.providers.textile_xpbd import TextileXpbdProvider
 from mono.providers.biomolecule_gemmi import BiomoleculeProvider
+from mono.providers.additive_slicer import AdditiveSlicerProvider
+from mono.providers.cam_machining import CamMachiningProvider, ToolDefinition, MachiningParameters
 from mono.security.ast_validator import SecurityViolationError
 from mono.vision.quad_view_generator import QuadViewGenerator
 
@@ -98,6 +100,36 @@ class BiomoleculeLoadRequest(BaseModel):
     pdb_content: str | None = None
     pdb_path: str | None = None
     mode: str = "ball_and_stick"
+
+
+class SlicerAuditRequest(BaseModel):
+    """Schéma de requête pour l'audit DfAM de fabrication additive."""
+
+    entity_id: str = "part_001"
+    max_overhang_angle_deg: float = 45.0
+    nozzle_diameter_mm: float = 0.4
+
+
+class SlicerSliceRequest(BaseModel):
+    """Schéma de requête pour le tranchage et la génération de G-code."""
+
+    entity_id: str = "part_001"
+    layer_height_mm: float = 0.20
+    infill_percent: int = 20
+    nozzle_temp_c: int = 215
+    bed_temp_c: int = 60
+
+
+class CamGenerateRequest(BaseModel):
+    """Schéma de requête pour la génération de trajectoires FAO 5-axes."""
+
+    entity_id: str = "part_001"
+    tool_diameter_mm: float = 10.0
+    tool_length_mm: float = 75.0
+    spindle_rpm: float = 12000.0
+    feedrate_mm_min: float = 3600.0
+    target_roughness_ra_um: float = 0.8
+    strategy: str = "finishing_scallop"
 
 
 class ServerState:
@@ -312,6 +344,136 @@ def get_biomolecule_ramachandran(entity_id: str = "protein_001") -> dict[str, ob
             for b in disulfides
         ],
     }
+
+
+@app.post("/api/slicer/audit")
+def audit_slicer(req: SlicerAuditRequest) -> dict[str, object]:
+    """Exécute l'audit DfAM sur une pièce du document."""
+    if req.entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité introuvable dans la scène.")
+
+    rec = state.doc.entities[req.entity_id]
+    if isinstance(rec.provider, BRepBuild123dProvider):
+        slicer_prov = AdditiveSlicerProvider(part=rec.provider.part)
+    elif isinstance(rec.provider, AdditiveSlicerProvider):
+        slicer_prov = rec.provider
+    else:
+        raise HTTPException(status_code=400, detail="L'entité n'est pas un solide B-Rep ou tranchable.")
+
+    report = slicer_prov.audit_dfam(
+        nozzle_diameter_mm=req.nozzle_diameter_mm,
+        max_overhang_angle_deg=req.max_overhang_angle_deg,
+    )
+    return {
+        "entity_id": req.entity_id,
+        "overhang_area_mm2": report.overhang_area_mm2,
+        "total_area_mm2": report.total_area_mm2,
+        "overhang_ratio": report.overhang_ratio,
+        "max_overhang_deg": report.max_overhang_angle_deg,
+        "fits_build_plate": report.fits_build_plate,
+        "dimensions_xyz_mm": report.dimensions_xyz_mm,
+        "warnings": report.warnings,
+        "is_manufacturable": report.is_manufacturable,
+    }
+
+
+@app.post("/api/slicer/slice")
+def slice_model_endpoint(req: SlicerSliceRequest) -> dict[str, object]:
+    """Tranche le modèle 3D et retourne l'analyse métrologique du G-code."""
+    if req.entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité introuvable dans la scène.")
+
+    rec = state.doc.entities[req.entity_id]
+    if isinstance(rec.provider, BRepBuild123dProvider):
+        slicer_prov = AdditiveSlicerProvider(part=rec.provider.part)
+    elif isinstance(rec.provider, AdditiveSlicerProvider):
+        slicer_prov = rec.provider
+    else:
+        raise HTTPException(status_code=400, detail="L'entité n'est pas un solide B-Rep ou tranchable.")
+
+    analysis = slicer_prov.slice_to_gcode(
+        layer_height_mm=req.layer_height_mm,
+        infill_percent=req.infill_percent,
+        nozzle_temp_c=req.nozzle_temp_c,
+        bed_temp_c=req.bed_temp_c,
+    )
+    return {
+        "entity_id": req.entity_id,
+        "layer_count": analysis.layer_count,
+        "max_z_mm": analysis.max_z_mm,
+        "filament_length_mm": analysis.filament_length_mm,
+        "estimated_mass_grams": analysis.estimated_mass_grams,
+        "estimated_time_seconds": analysis.estimated_time_seconds,
+        "is_valid": analysis.is_valid,
+    }
+
+
+@app.post("/api/cam/generate")
+def generate_cam_toolpath(req: CamGenerateRequest) -> dict[str, object]:
+    """Génère la trajectoire d'usinage FAO 5-axes RTCP pour une pièce."""
+    if req.entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Entité introuvable dans la scène.")
+
+    rec = state.doc.entities[req.entity_id]
+    if isinstance(rec.provider, BRepBuild123dProvider):
+        part = rec.provider.part
+    elif isinstance(rec.provider, AdditiveSlicerProvider):
+        part = rec.provider.part
+    else:
+        raise HTTPException(status_code=400, detail="L'entité n'est pas usinable.")
+
+    tool = ToolDefinition(
+        diameter_mm=req.tool_diameter_mm,
+        length_mm=req.tool_length_mm,
+        corner_radius_mm=req.tool_diameter_mm * 0.5,
+    )
+    params = MachiningParameters(
+        spindle_rpm=req.spindle_rpm,
+        feedrate_mm_min=req.feedrate_mm_min,
+        target_roughness_ra_um=req.target_roughness_ra_um,
+    )
+    strat = req.strategy if req.strategy in ("roughing_spiral", "finishing_scallop", "5axis_swarf") else "finishing_scallop"
+    cam_prov = CamMachiningProvider(part=part, tool=tool, params=params)
+    cam_prov.generate_toolpath(strategy=strat)
+    audit = cam_prov.audit_cam()
+
+    # Enregistrement de l'entité trajectoire dans la scène
+    toolpath_id = f"{req.entity_id}_cam_toolpath"
+    state.doc.entities[toolpath_id] = EntityRecord(
+        entity_id=toolpath_id,
+        provider_name="cam_machining",
+        scale_domain="milli",
+        provider=cam_prov,
+        tags=["cam", "toolpath", "5axis"],
+    )
+
+    return {
+        "entity_id": req.entity_id,
+        "toolpath_entity_id": toolpath_id,
+        "total_points": audit.total_points,
+        "toolpath_length_mm": audit.toolpath_length_mm,
+        "estimated_machining_time_seconds": audit.estimated_machining_time_seconds,
+        "optimal_stepover_mm": audit.optimal_stepover_mm,
+        "scallop_height_um": audit.scallop_height_um,
+        "is_collision_free": audit.is_collision_free,
+        "gouge_warnings": audit.gouge_warnings,
+    }
+
+
+@app.get("/api/cam/gcode")
+def get_cam_gcode(entity_id: str = "part_001_cam_toolpath", flavor: str = "fanuc") -> Response:
+    """Télécharge le programme G-code ISO 6983 post-processé (Fanuc, Siemens, Heidenhain, Haas)."""
+    if entity_id not in state.doc.entities:
+        raise HTTPException(status_code=404, detail="Trajectoire FAO introuvable.")
+
+    rec = state.doc.entities[entity_id]
+    if not isinstance(rec.provider, CamMachiningProvider):
+        raise HTTPException(status_code=400, detail="L'entité spécifiée n'est pas une trajectoire FAO.")
+
+    flv = flavor.lower()
+    flavor_literal = flv if flv in ("fanuc", "siemens", "heidenhain", "haas") else "fanuc"
+    gcode_text = rec.provider.post_process_gcode(flavor=flavor_literal)
+    return Response(content=gcode_text, media_type="text/plain")
 
 
 @app.post("/api/ecip/execute")
