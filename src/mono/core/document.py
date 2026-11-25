@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Mapping
 
 from mono.core.geometry_provider import GeometryProvider, BinaryMeshPayload, ValidationReport
@@ -88,6 +89,14 @@ class MonoDocument:
             unit: Symbole de l'unité (ex: 'm', 'mm', 'deg').
             label: Libellé d'affichage convivial pour l'utilisateur.
         """
+        if not all(math.isfinite(v) for v in (value, min_value, max_value)):
+            raise ValueError("Les valeurs de paramètre doivent être finies.")
+        if min_value > max_value:
+            raise ValueError("La borne minimale ne peut pas dépasser la borne maximale.")
+        if not min_value <= value <= max_value:
+            raise ValueError("La valeur initiale doit être comprise dans les bornes.")
+        if not unit:
+            raise ValueError("L'unité du paramètre est obligatoire.")
         self.parameters[name] = ParameterDefinition(
             value=value,
             min_value=min_value,
@@ -107,6 +116,8 @@ class MonoDocument:
         if name not in self.parameters:
             raise KeyError(f"Paramètre inconnu : '{name}'")
 
+        if not math.isfinite(new_value):
+            raise ValueError("La nouvelle valeur du paramètre doit être finie.")
         param = self.parameters[name]
         clamped = max(param.min_value, min(new_value, param.max_value))
         candidate_values = {key: value.value for key, value in self.parameters.items()}
