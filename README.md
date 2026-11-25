@@ -1,6 +1,6 @@
 # Mono — Plateforme multidisciplinaire d'ingénierie et de sciences computationnelles
 
-**État au 25 novembre 2026 : prototype logiciel en reconstruction architecturale.**
+**État au 26 novembre 2026 : prototype logiciel en reconstruction architecturale.**
 
 Mono ambitionne de relier dans un environnement cohérent la conception CAO, la simulation multiphysique, l'optimisation, la fabrication, la robotique, le PLM, les sciences moléculaires, la science des matériaux et les données scientifiques.
 
@@ -21,59 +21,59 @@ Le dépôt actuel contient des prototypes spécialisés. Il ne constitue pas enc
 | CAM et fabrication additive | Fournisseurs prototypes; post-processeurs et programmes machine non qualifiés |
 | PLM, robotique avancée, électromagnétisme, multibody, optimisation topologique, Big Data et systèmes naturels | Non démontrés comme capacités complètes |
 
-Consulter la [matrice des capacités](docs/architecture/CAPABILITY_MATRIX.md) pour les limites par domaine.
+Consulter la [matrice des capacités](docs/architecture/CAPABILITY_MATRIX.md) et le référentiel V3.1 / E71 dans la Library pour l'état détaillé et les limites par domaine.
 
 ## Reconstruction des fondations
 
 La branche `foundation-reset-2026-11` contient la première tranche de reconstruction :
 
-- Modèle de domaine V2 indépendant des moteurs.
+- Contrats Domain Core initiaux, ports d'infrastructure et quantités physiques dimensionnées.
 - Références d'objets, révisions, artefacts, études et exécutions.
-- Quantités physiques avec unités/dimensions et conversions vérifiées.
-- Ports spécialisés pour solveurs, géométrie, maillage, stockage, événements, jobs et extensions.
 - Transitions de calcul séparant fin du solveur, convergence, vérification, validation et qualification.
+- Mise à jour paramétrique atomique : rollback si une reconstruction dépendante échoue.
 - Exécution ECIP dans le processus backend désactivée par défaut : le filtre AST n'est pas un bac à sable.
-- Mise à jour paramétrique atomique, sans état géométrique partiellement modifié.
 - Première protection du format .mono contre chemins dangereux, liens, manifestes invalides et archives surdimensionnées.
-- CI Windows pour Python et CI frontend Bun avec lockfiles.
+- CI Python sur Windows, Linux et macOS; build frontend Bun verrouillé.
 
-Ces changements constituent une première tranche, pas la fin de la refonte.
+Ces changements constituent une première tranche, pas la fin de la refonte. Le modèle de persistance, l'outbox, la queue durable, le sandbox OS, l'installateur Tauri, le PLM complet et les solveurs avancés restent à construire.
 
 ## Architecture et gouvernance
 
 - [Audit des fondations](docs/audit/FOUNDATION_AUDIT.md)
-- [Architecture de référence V2](docs/architecture/FOUNDATION_V2.md)
+- [Architecture de référence V2 — historique](docs/architecture/FOUNDATION_V2.md)
 - [Décisions d'architecture](docs/architecture/DECISIONS.md)
 - [Matrice des capacités](docs/architecture/CAPABILITY_MATRIX.md)
 - [Feuille de reconstruction](docs/architecture/RECONSTRUCTION_ROADMAP.md)
 
-La stratégie retenue est un monolithe modulaire local-first avec workers de calcul isolés. PostgreSQL est la cible pour la source de vérité transactionnelle; l'installation desktop locale doit encore être prototypée. Les artefacts volumineux sont séparés des métadonnées.
+La cible proposée est un monolithe modulaire local-first avec des workers de calcul réellement isolés. PostgreSQL est recommandé dans E04 V1.1 et repris comme cible candidate, mais cette décision reste à ratifier par ADR et prototype d'installation/upgrade/backup/restore sur Windows desktop. Les artefacts volumineux doivent être séparés des métadonnées.
 
-## Validation actuelle
+## Validation CI vérifiée
 
-Un run Windows CI terminé sur le commit `1ef9a793` a rapporté :
+<badge>Run 45723972613 · commit 99624cc</badge>
 
-- **111 tests réussis**
-- **12 tests ignorés**, car ils nécessitent CalculiX/OrcaSlicer ou une archive de démonstration absente du runner
-- **3 avertissements**
+| Environnement | Tests réussis | Ignorés | Avertissements |
+|---|---:|---:|---:|
+| Windows | 111 | 12 | 3 |
+| Linux | 111 | 12 | 3 |
+| macOS | 111 | 12 | 3 |
 
-Le frontend a également réussi son installation Bun verrouillée et son build. Un run plus récent doit encore confirmer le dernier état de la branche.
+Le build frontend a également réussi avec Bun verrouillé. Le workflow installe libGLU/libGL sur Linux pour les dépendances Gmsh/OpenCASCADE.
 
-Un test ignoré n'est pas une validation du moteur correspondant. Les tests FEA/CFD doivent être exécutés avec les vrais binaires et jeux de référence.
+Les 12 tests ignorés dans chaque environnement sont explicitement identifiés : neuf tests de validation FEA/CalculiX, un test de présence CalculiX/OrcaSlicer, un solveur CalculiX end-to-end et un test d'archive de démonstration absente. Ces tests ne sont pas simulés et leur absence ne vaut pas validation physique.
 
-## Environnement
+Les trois avertissements concernent Taichi (dépréciation Python et séquence d'échappement) et l'usage de httpx avec Starlette TestClient. Le build frontend signale encore l'externalisation Node de fs/crypto par h264-mp4-encoder et un chunk principal d'environ 6 Mo. Le build Tauri, l'exécution dans un navigateur réel, les solveurs externes et l'installation desktop ne sont pas validés par ce workflow.
+
+[Consulter le run CI multiplateforme](https://github.com/jbrandonp/mono-cad/actions/runs/45723972613).
+
+## Environnement développeur
 
 Le projet cible Python 3.12, uv, TypeScript/Bun, Three.js et Tauri 2/Rust. Les moteurs scientifiques externes sont optionnels et doivent être inventoriés, versionnés, licenciés et testés individuellement.
-
-Le rapport matériel fourni précédemment par l'utilisateur est historique; cette session n'a pas inspecté son PC, son GPU, CUDA, ni ses installations locales. Voir l'[audit de l'environnement](docs/audit/FOUNDATION_AUDIT.md).
-
-## Démarrage développeur
 
 Les commandes suivantes supposent que les prérequis du système et les dépendances natives du projet sont disponibles :
 
 ```bash
 uv sync --locked
-uv run pytest -q
+uv run pytest -q -rs
 cd frontend
 bun install --frozen-lockfile
 bun run build
@@ -87,7 +87,10 @@ Le build Tauri et les moteurs externes doivent être testés séparément sur ch
 - Ne pas utiliser les résultats de simulation comme preuve de conception qualifiée sans vérification, validation, incertitudes et domaine d'applicabilité.
 - Ne pas libérer de G-code ou trajectoire robot sur une machine réelle sans simulation, validation du post-processeur et contrôle humain.
 - Les révisions PLM, la persistance PostgreSQL, la queue durable et le sandbox OS sont encore à implémenter.
+- La branche de reconstruction est une PR draft non fusionnée; ce README ne décrit pas master comme contenant ces modifications.
 
-## Traçabilité
+## Traçabilité documentaire
 
-L'ancien README est conservé dans [docs/legacy/README_HISTORICAL_SPEC.md](docs/legacy/README_HISTORICAL_SPEC.md). Il est archivé comme document historique et ses affirmations ne sont plus la source de vérité du projet.
+Le dossier Library actif est maintenant MONO_V2_INDEX_MAITRE_v2_41.md, avec le référentiel V3.1 et l'audit transversal E71. E52-E69 sont présents comme bundles de pièces jointes Project mais leur contenu n'a pas pu être lu dans la session; ils restent un blocage de revue documentaire.
+
+L'ancien README et les anciens index sont conservés dans les archives historiques. Le README historique n'est plus la source de vérité du projet.
