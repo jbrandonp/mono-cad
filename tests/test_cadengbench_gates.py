@@ -94,8 +94,9 @@ def test_gate_l1_target_dimensions_match() -> None:
     assert res_bad.is_valid is False
 
 
-def test_gate_l2_z_parametric_robustness() -> None:
+def test_gate_l2_z_parametric_robustness(monkeypatch: pytest.MonkeyPatch) -> None:
     """Vérifie que la porte L2-Z teste les variations ±10% sur les paramètres."""
+    monkeypatch.setenv("MONO_ENABLE_UNSAFE_INPROCESS_ECIP", "1")
     script = """import build123d as bd
 length = PARAMS.get("length", 100.0)
 width = PARAMS.get("width", 50.0)
