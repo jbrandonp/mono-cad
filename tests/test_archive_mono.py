@@ -207,3 +207,29 @@ async def test_mono_archive_api_endpoints() -> None:
         data_imp = res_import.json()
         assert data_imp["status"] == "success"
         assert data_imp["entities_restored"] >= 1
+
+
+def test_archive_rejects_path_traversal_member() -> None:
+    """Rejects unsafe member names before manifest or payload restoration."""
+    with pytest.raises(MonoArchiveError):
+        MonoArchive._validate_member_name("../outside.txt")
+    with pytest.raises(MonoArchiveError):
+        MonoArchive._validate_member_name("folder\\\\outside.txt")
+
+
+def test_archive_rejects_symlink_members() -> None:
+    """A .mono archive must contain regular files only."""
+    tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+        manifest = json.dumps({"format": "mono-archive", "entities": []}).encode("utf-8")
+        manifest_info = tarfile.TarInfo("manifest.json")
+        manifest_info.size = len(manifest)
+        tar.addfile(manifest_info, io.BytesIO(manifest))
+
+        link = tarfile.TarInfo("misc/link")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../outside.txt"
+        tar.addfile(link)
+
+    with pytest.raises(MonoArchiveError):
+        MonoArchive.inspect(tar_buf.getvalue())
