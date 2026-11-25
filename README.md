@@ -26,7 +26,7 @@
 > **Note de statut (25 novembre 2026)**  
 > Ce dépôt contient des prototypes de CAO, FEA, CFD, BIM, textile, bio/molécules, CAM et dessin technique. Les descriptions détaillées ci-dessous mêlent capacités présentes et objectifs de conception historiques. Elles ne constituent pas une preuve de validation industrielle, de certification, de couverture complète, de convergence scientifique, de performance mesurée ou de compatibilité multi-OS. Consulter la [matrice de capacités](docs/architecture/CAPABILITY_MATRIX.md), l'[audit des fondations](docs/audit/FOUNDATION_AUDIT.md), l'[architecture V2](docs/architecture/FOUNDATION_V2.md) et la [feuille de reconstruction](docs/architecture/RECONSTRUCTION_ROADMAP.md) pour l'état vérifiable.
 >
-> **Sécurité :** le filtrage AST d'ECIP n'est pas un bac à sable; l'exécution actuelle utilise Python exec dans le processus backend. Ne pas exécuter de scripts non fiables. Les résultats de simulation ne doivent pas être utilisés comme preuves de conception qualifiée sans vérification et validation adaptées.
+> **Sécurité :** le filtrage AST d'ECIP n'est pas un bac à sable. L'exécution ECIP dans le processus backend est désactivée par défaut; le mode legacy ne peut être activé qu'avec `MONO_ENABLE_UNSAFE_INPROCESS_ECIP=1` dans un environnement local jetable et reste non isolé. Ne pas l'utiliser avec du code non fiable. Les tests qui exigent CalculiX ou l'archive de démonstration sont ignorés si leurs dépendances externes sont absentes; un test ignoré ne constitue pas une validation. Les résultats de simulation ne doivent pas être utilisés comme preuves de conception qualifiée sans vérification et validation adaptées.
 
 ---
 
