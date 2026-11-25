@@ -2,6 +2,20 @@
 
 Une phase n'est fermée qu'avec code intégré, tests exécutés, build, documentation et preuve reproductible.
 
+## État de départ de la branche foundation-reset-2026-11
+Première tranche réalisée :
+- Contrats de domaine initiaux, ports d'infrastructure et registre d'unités.
+- Transitions de cycle de vie avec preuves requises aux portes convergence/vérification/validation/qualification.
+- Filtrage ECIP fail-closed par défaut; mode in-process legacy uniquement sur opt-in explicite pour tests/environnements jetables.
+- Mises à jour de paramètres atomiques : rollback intégral si reconstruction dépendante échoue.
+- Validation et limites de ressources initiales du format .mono.
+- CI Windows Python + build frontend Bun verrouillé.
+
+Non clos :
+- Les tests d'intégration CalculiX et l'archive démo sont ignorés lorsqu'ils sont absents; la qualification des moteurs reste à exécuter.
+- PostgreSQL, migrations, outbox, queue durable et sandbox OS restent à implémenter.
+- Aucun domaine avancé n'est qualifié industriellement.
+
 ## Gate 0 — Rebaseline et contrôle du risque
 - Corriger les revendications non prouvées du README.
 - CI Python, TypeScript et Tauri.
