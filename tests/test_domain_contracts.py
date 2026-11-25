@@ -57,7 +57,7 @@ def test_execution_state_machine_rejects_skipped_convergence() -> None:
     running = prepared.transition(ExecutionStatus.QUEUED).transition(ExecutionStatus.RUNNING)
     finished = running.transition(ExecutionStatus.SOLVER_FINISHED)
     with pytest.raises(ValueError):
-        finished.transition(ExecutionStatus.VERIFIED)
+        finished.transition(ExecutionStatus.VERIFIED, evidence={"suite": "ref"})
 
 
 def test_execution_requires_explicit_convergence_before_verification() -> None:
@@ -69,8 +69,9 @@ def test_execution_requires_explicit_convergence_before_verification() -> None:
     execution = execution.transition(ExecutionStatus.QUEUED)
     execution = execution.transition(ExecutionStatus.RUNNING)
     execution = execution.transition(ExecutionStatus.SOLVER_FINISHED)
-    execution = execution.transition(ExecutionStatus.NUMERICALLY_CONVERGED)
-    assert execution.transition(ExecutionStatus.VERIFIED).status == ExecutionStatus.VERIFIED
+    execution = execution.transition(ExecutionStatus.NUMERICALLY_CONVERGED, evidence={"residual": 1e-8})
+    verified = execution.transition(ExecutionStatus.VERIFIED, evidence={"benchmark": "linear-elastic-cube"})
+    assert verified.status == ExecutionStatus.VERIFIED
 
 
 def test_sha256_is_deterministic() -> None:
