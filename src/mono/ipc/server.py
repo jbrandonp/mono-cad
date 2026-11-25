@@ -763,12 +763,17 @@ def slice_model_endpoint(req: SlicerSliceRequest) -> dict[str, object]:
     else:
         raise HTTPException(status_code=400, detail="L'entité n'est pas un solide B-Rep ou tranchable.")
 
-    analysis = slicer_prov.slice_to_gcode(
-        layer_height_mm=req.layer_height_mm,
-        infill_percent=req.infill_percent,
-        nozzle_temp_c=req.nozzle_temp_c,
-        bed_temp_c=req.bed_temp_c,
-    )
+    try:
+        analysis = slicer_prov.slice_to_gcode(
+            layer_height_mm=req.layer_height_mm,
+            infill_percent=req.infill_percent,
+            nozzle_temp_c=req.nozzle_temp_c,
+            bed_temp_c=req.bed_temp_c,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     slicer_id = f"{req.entity_id}_slicer"
     state.doc.entities[slicer_id] = EntityRecord(
@@ -788,6 +793,8 @@ def slice_model_endpoint(req: SlicerSliceRequest) -> dict[str, object]:
         "estimated_mass_grams": analysis.estimated_mass_grams,
         "estimated_time_seconds": analysis.estimated_time_seconds,
         "is_valid": analysis.is_valid,
+        "generation_method": analysis.generation_method,
+        "fabrication_ready": analysis.fabrication_ready,
     }
 
 
