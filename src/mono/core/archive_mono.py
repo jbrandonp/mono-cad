@@ -300,6 +300,55 @@ class MonoArchive:
             raise
 
     @classmethod
+    def _read_manifest(cls, tar: tarfile.TarFile) -> dict[str, object]:
+        """Read and validate the manifest against archive headers before restoration."""
+        man_file = tar.extractfile("manifest.json")
+        if man_file is None:
+            raise MonoArchiveError("manifest.json manquant dans le conteneur .mono")
+        try:
+            raw = man_file.read(cls.MAX_MANIFEST_BYTES + 1)
+            if len(raw) > cls.MAX_MANIFEST_BYTES:
+                raise MonoArchiveError("Manifeste .mono trop volumineux")
+            manifest = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as err:
+            raise MonoArchiveError(f"manifest.json corrompu ou illisible : {err}") from err
+        if not isinstance(manifest, dict):
+            raise MonoArchiveError("Le manifeste .mono doit être un objet JSON")
+        if manifest.get("format") != cls.FORMAT_NAME:
+            raise MonoArchiveError("Format de manifeste .mono non reconnu")
+        if manifest.get("schema_version") != cls.SCHEMA_VERSION:
+            raise MonoArchiveError(f"Version de schéma .mono non prise en charge : {manifest.get('schema_version')!r}")
+        entities = manifest.get("entities")
+        if not isinstance(entities, list) or len(entities) > cls.MAX_MEMBERS:
+            raise MonoArchiveError("Liste d'entités du manifeste invalide")
+        if manifest.get("entities_count") != len(entities):
+            raise MonoArchiveError("entities_count ne correspond pas à la liste d'entités")
+        members = {member.name: member for member in tar.getmembers()}
+        seen_ids: set[str] = set()
+        for entity in entities:
+            if not isinstance(entity, dict):
+                raise MonoArchiveError("Entrée d'entité invalide dans le manifeste")
+            entity_id = entity.get("entity_id")
+            if not isinstance(entity_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", entity_id):
+                raise MonoArchiveError("Identifiant d'entité invalide dans le manifeste")
+            if entity_id in seen_ids:
+                raise MonoArchiveError(f"Identifiant d'entité dupliqué : {entity_id!r}")
+            seen_ids.add(entity_id)
+            provider_name = entity.get("provider_name")
+            if not isinstance(provider_name, str) or not provider_name:
+                raise MonoArchiveError(f"Provider invalide pour l'entité {entity_id!r}")
+            rel_path = cls._validate_member_name(entity.get("file_path", ""))
+            if rel_path == "manifest.json" or rel_path not in members:
+                raise MonoArchiveError(f"Artefact absent du conteneur : {rel_path!r}")
+            digest = entity.get("sha256")
+            if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+                raise MonoArchiveError(f"SHA-256 invalide pour l'artefact {rel_path!r}")
+            size = entity.get("size_bytes")
+            if not isinstance(size, int) or isinstance(size, bool) or size != members[rel_path].size:
+                raise MonoArchiveError(f"Taille incohérente pour l'artefact {rel_path!r}")
+        return manifest
+
+    @classmethod
     def inspect(cls, file_or_bytes: str | bytes) -> dict[str, object]:
         """Inspecte le contenu et le manifeste d'une archive .mono sans charger les géométries en mémoire.
 
@@ -313,14 +362,7 @@ class MonoArchive:
         tar = cls._decompress_to_tar(raw_data)
 
         try:
-            man_file = tar.extractfile("manifest.json")
-            if man_file is None:
-                raise MonoArchiveError("manifest.json manquant dans le conteneur .mono")
-            try:
-                manifest_dict = json.loads(man_file.read().decode("utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError) as jerr:
-                raise MonoArchiveError(f"manifest.json corrompu ou illisible : {jerr}") from jerr
-            return manifest_dict  # type: ignore
+            return cls._read_manifest(tar)
         finally:
             tar.close()
 
@@ -338,14 +380,7 @@ class MonoArchive:
         tar = cls._decompress_to_tar(raw_data)
 
         try:
-            man_file = tar.extractfile("manifest.json")
-            if man_file is None:
-                raise MonoArchiveError("manifest.json introuvable dans l'archive .mono")
-
-            try:
-                manifest = json.loads(man_file.read().decode("utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError) as jerr:
-                raise MonoArchiveError(f"manifest.json corrompu ou illisible : {jerr}") from jerr
+            manifest = cls._read_manifest(tar)
             doc = MonoDocument()
             doc.version = manifest.get("version", "2.0")
             doc.units = manifest.get("units", doc.units)
@@ -371,14 +406,17 @@ class MonoArchive:
                     p_name = ent_meta["provider_name"]
                     rel_path = cls._validate_member_name(ent_meta["file_path"])
                     expected_sha = ent_meta.get("sha256")
+                    expected_size = ent_meta.get("size_bytes")
 
                     art_file = tar.extractfile(rel_path)
                     if art_file is None:
                         raise MonoArchiveError(f"Artefact '{rel_path}' manquant ou illisible dans le conteneur .mono.")
-                    art_bytes = art_file.read()
+                    art_bytes = art_file.read(cls.MAX_MEMBER_BYTES + 1)
+                    if len(art_bytes) > cls.MAX_MEMBER_BYTES or len(art_bytes) != expected_size:
+                        raise MonoArchiveError(f"Taille invalide pour l'artefact '{rel_path}'.")
 
                     # Vérification d'intégrité SHA-256
-                    if expected_sha and cls._compute_sha256(art_bytes) != expected_sha:
+                    if cls._compute_sha256(art_bytes) != expected_sha:
                         raise MonoArchiveError(f"Corruption détectée dans l'artefact '{rel_path}' (échec SHA-256).")
 
                     # Réinstanciation selon le type de fournisseur
