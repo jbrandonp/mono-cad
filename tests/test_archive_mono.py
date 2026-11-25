@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import tarfile
@@ -233,3 +234,16 @@ def test_archive_rejects_symlink_members() -> None:
 
     with pytest.raises(MonoArchiveError):
         MonoArchive.inspect(tar_buf.getvalue())
+
+
+def test_archive_rejects_compressed_input_over_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(MonoArchive, "MAX_COMPRESSED_BYTES", 8)
+    with pytest.raises(MonoArchiveError, match="compressée trop volumineuse"):
+        MonoArchive._read_archive_bytes(b"x" * 9)
+
+
+def test_archive_rejects_gzip_decompression_bomb(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(MonoArchive, "MAX_ARCHIVE_BYTES", 64)
+    compressed = gzip.compress(b"x" * 4096)
+    with pytest.raises(MonoArchiveError, match="décompressée trop volumineuse"):
+        MonoArchive._decompress_to_tar(compressed)
