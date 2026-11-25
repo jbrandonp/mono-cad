@@ -315,7 +315,7 @@ class MonoArchive:
                 tar = tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:")
             except Exception as err:
                 raise MonoArchiveError(f"Conteneur Zstandard corrompu ou falsifié : {err}") from err
-        elif data.startswith(b"\\x1f\\x8b"):
+        elif data.startswith(b"\x1f\x8b"):
             try:
                 with gzip.GzipFile(fileobj=io.BytesIO(data), mode="rb") as stream:
                     tar_bytes = stream.read(cls.MAX_ARCHIVE_BYTES + 1)
