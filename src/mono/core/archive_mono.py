@@ -27,7 +27,7 @@ import re
 import tarfile
 import tempfile
 import uuid
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Mapping
 
 import build123d as bd
