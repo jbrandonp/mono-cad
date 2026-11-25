@@ -49,7 +49,7 @@ La cible proposée est un monolithe modulaire local-first avec des workers de ca
 
 ## Validation CI vérifiée
 
-<badge>Run 45723972613 · commit 99624cc</badge>
+**Run 45723972613 · commit 99624cc**
 
 | Environnement | Tests réussis | Ignorés | Avertissements |
 |---|---:|---:|---:|
