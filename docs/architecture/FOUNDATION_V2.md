@@ -1,3 +1,7 @@
+> **Note de statut — 26 novembre 2026 :** ce document est une architecture cible V2 historique, pas la source de vérité active. Le référentiel de consolidation actuel est MONO_V2_INDEX_MAITRE_v2_41.md et MONO_V2_ARCHITECTURE_BASELINE_v3_1.md dans la Library. Les choix ci-dessous restent soumis aux ADR et portes E71. PostgreSQL est une cible recommandée par E04 V1.1, non ratifiée et non implémentée. E23–E27 restent non gelés; les solveurs ne sont pas qualifiés.
+
+---
+
 # Mono — Architecture de référence V2 reconstruite depuis les invariants
 Statut : architecture cible; seule la première tranche de contrats de domaine est codée.
 
@@ -46,7 +50,7 @@ ModelDomain, SpatialReference, Grid, BoundaryForcing, Scenario, Observation, Cal
 SI cohérent recommandé en interne; unité d'origine conservée à l'import; conversion explicite et testée. Champs vectoriels/tensoriels : repère, base, localisation, convention de signe et unité. Artefact : ID, type, schema version, media type, hash, taille, URI, source revision, unités, repère, producteur/version, provenance et rétention. Les gros binaires restent hors des tables relationnelles.
 
 ## Persistance
-PostgreSQL est la source de vérité pour métadonnées, identités, révisions, relations, permissions, événements et jobs. Artefacts sur filesystem local content-addressed au départ, puis object storage S3-compatible pour distribution distante. Outbox transactionnelle pour les événements.
+PostgreSQL est la cible proposée pour la source de vérité pour métadonnées, identités, révisions, relations, permissions, événements et jobs. Artefacts sur filesystem local content-addressed au départ, puis object storage S3-compatible pour distribution distante. Outbox transactionnelle pour les événements.
 
 Le desktop doit rester local-first. Une instance PostgreSQL locale gérée par l'installateur est l'option cible pour l'ambition long terme; SQLite reste utile pour caches/préférences/tests. Un prototype d'installation, mise à niveau et sauvegarde Windows doit valider cette décision avant gel architectural.
 
