@@ -321,7 +321,8 @@ class MonoArchive:
         entities = manifest.get("entities")
         if not isinstance(entities, list) or len(entities) > cls.MAX_MEMBERS:
             raise MonoArchiveError("Liste d'entités du manifeste invalide")
-        if manifest.get("entities_count") != len(entities):
+        count = manifest.get("entities_count")
+        if not isinstance(count, int) or isinstance(count, bool) or count != len(entities):
             raise MonoArchiveError("entities_count ne correspond pas à la liste d'entités")
         members = {member.name: member for member in tar.getmembers()}
         seen_ids: set[str] = set()
