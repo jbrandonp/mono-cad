@@ -186,8 +186,15 @@ class SolverExecution(ContractModel):
     validation_report: dict[str, Any] | None = None
     qualification_context: str | None = None
 
-    def transition(self, target: ExecutionStatus, *, at: datetime | None = None) -> "SolverExecution":
-        """Return a new execution state; invalid or skipped transitions are rejected."""
+    def transition(
+        self,
+        target: ExecutionStatus,
+        *,
+        at: datetime | None = None,
+        evidence: dict[str, Any] | None = None,
+        qualification_context: str | None = None,
+    ) -> "SolverExecution":
+        """Return a new state and require evidence at each credibility gate."""
         if target not in _ALLOWED_TRANSITIONS[self.status]:
             raise ValueError(f"Illegal execution transition: {self.status.value} -> {target.value}")
         timestamp = at or datetime.now(timezone.utc)
@@ -196,13 +203,28 @@ class SolverExecution(ContractModel):
         changes: dict[str, Any] = {"status": target}
         if target == ExecutionStatus.RUNNING:
             changes["started_at"] = timestamp
+        evidence_field = {
+            ExecutionStatus.NUMERICALLY_CONVERGED: "convergence_report",
+            ExecutionStatus.VERIFIED: "verification_report",
+            ExecutionStatus.VALIDATED: "validation_report",
+        }.get(target)
+        if evidence_field is not None:
+            if not evidence:
+                raise ValueError(f"{target.value} requires a non-empty {evidence_field}")
+            changes[evidence_field] = evidence
+        if target == ExecutionStatus.QUALIFIED:
+            if not qualification_context or not qualification_context.strip():
+                raise ValueError("qualified status requires a named qualification_context")
+            if self.validation_report is None:
+                raise ValueError("qualified status requires a prior validation report")
+            changes["qualification_context"] = qualification_context
         if target in {
             ExecutionStatus.SOLVER_FINISHED, ExecutionStatus.NUMERICALLY_CONVERGED,
             ExecutionStatus.VERIFIED, ExecutionStatus.VALIDATED, ExecutionStatus.QUALIFIED,
             ExecutionStatus.FAILED, ExecutionStatus.CANCELLED, ExecutionStatus.TIMED_OUT,
         }:
             changes["finished_at"] = timestamp
-        return self.model_copy(update=changes)
+        return type(self).model_validate({**self.model_dump(), **changes})
 
 
 class DomainEvent(ContractModel):
