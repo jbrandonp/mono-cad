@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+import pytest
 from mono.execution.workers import (
     get_ccx_path,
     get_orcaslicer_path,
@@ -11,6 +12,7 @@ from mono.execution.workers import (
 )
 
 
+@pytest.mark.skipif(not (is_ccx_available() and is_orcaslicer_available()), reason="CalculiX/OrcaSlicer absent : présence des binaires non vérifiée.")
 def test_workers_presence() -> None:
     """Vérifie la présence et le chemin des binaires portables ccx.exe et orca-slicer.exe."""
     assert is_ccx_available() is True
@@ -24,6 +26,7 @@ def test_workers_presence() -> None:
     assert orca_path.name.lower() in ("orca-slicer.exe", "orca-slicer")
 
 
+@pytest.mark.skipif(not is_ccx_available(), reason="CalculiX absent : calcul réel non exécuté.")
 def test_calculix_solve_end_to_end() -> None:
     """Exécute un cas de calcul linéaire-statique réel sous CalculiX ccx.exe."""
     with tempfile.TemporaryDirectory() as tmp_dir_str:
