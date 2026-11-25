@@ -129,7 +129,8 @@ def convert_value(value: float, from_unit: str, to_unit: str) -> float:
 
 def validate_unit_dimension(unit: str, dimension: str) -> None:
     definition = get_unit_definition(unit)
-    if definition.dimension != dimension:
+    canonical_dimension = {"stress": "pressure"}.get(dimension, dimension)
+    if definition.dimension != canonical_dimension:
         raise ValueError(
             f"L'unité {unit!r} a la dimension {definition.dimension!r}, "
             f"pas {dimension!r}"
