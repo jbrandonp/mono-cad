@@ -37,6 +37,11 @@ jobs:
         with:
           version: "0.12.10"
           require-checksums: true
+      - name: Install native geometry runtime dependencies on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglu1-mesa libgl1
       - name: Sync locked Python environment
         run: uv sync --locked
       - name: Run Python tests with explicit skip reasons
