@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v6
-      - name: Sync locked Python environment on the primary desktop OS
+      - name: Sync locked Python environment
         run: uv sync --locked
       - name: Run Python tests
         run: uv run pytest -q
@@ -30,18 +30,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
-      - name: Regenerate frontend lockfile in the CI workspace
-        working-directory: frontend
-        run: bun install
-      - name: Verify frozen lockfile installation
+      - name: Install locked frontend dependencies
         working-directory: frontend
         run: bun install --frozen-lockfile
       - name: Type-check and build frontend
         working-directory: frontend
         run: bun run build
-      - name: Publish regenerated Bun lockfile for review
-        uses: actions/upload-artifact@v4
-        with:
-          name: regenerated-bun-lockfile
-          path: frontend/bun.lock
-          if-no-files-found: error
