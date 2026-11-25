@@ -4,8 +4,8 @@
 ### **Environnement d'Ingénierie Multidisciplinaire Unifié Piloté par Intelligence Artificielle**
 #### *De la Macromolécule Atomique ($10^{-9}\text{ m}$) à l'Architecture Bâtiment ($10^{2}\text{ m}$)*
 
-[![Tests](https://img.shields.io/badge/tests-106%20passed-brightgreen?style=for-the-badge&logo=pytest)](file:///tests)
-[![Coverage](https://img.shields.io/badge/coverage-83%25-green?style=for-the-badge)](file:///src/mono)
+[![Tests](https://img.shields.io/badge/tests-audit%20en%20cours-orange?style=for-the-badge&logo=pytest)](ENGINEERING_CAPABILITY_AUDIT_2026-11-25.md)
+[![Coverage](https://img.shields.io/badge/coverage-non%20revalid%C3%A9e-lightgrey?style=for-the-badge)](ENGINEERING_CAPABILITY_AUDIT_2026-11-25.md)
 [![Python](https://img.shields.io/badge/python-3.12-blue?style=for-the-badge&logo=python)](pyproject.toml)
 [![TypeScript](https://img.shields.io/badge/typescript-5.9-3178C6?style=for-the-badge&logo=typescript)](frontend/src/main.ts)
 [![Architecture](https://img.shields.io/badge/architecture-100%25%20Native%20%7C%20Zero--Docker-F58025?style=for-the-badge)](file:///bin)
@@ -49,22 +49,16 @@
 
 ## 1. Vue d'Ensemble & Vision Système
 
-**Mono CAD Studio** est la première plateforme d'ingénierie multidisciplinaire unifiée conçue pour fusionner dans une même scène physique continue :
+**Mono CAD Studio** est un prototype de plateforme d'ingénierie multidisciplinaire qui vise à relier dans un même environnement :
 - La **CAO mécanique solide analytique** (B-Rep exact ISO 10303 STEP),
 - L'**architecture numérique du bâtiment** (BIM IFC4 ISO 16739),
-- La **physique des éléments finis** (FEA linéaire & non linéaire, contraintes de Von Mises),
-- La **simulation de matériaux souples temps réel sur GPU** (Textile XPBD à 60 FPS),
+- L'**analyse mécanique par éléments finis** (FEA statique linéaire actuellement documentée dans le fournisseur),
+- Un **prototype de simulation de matériaux souples** (Textile XPBD; les performances doivent être mesurées sur matériel cible),
 - La **cristallographie macromoléculaire** (Protéines PDB/mmCIF, BinaryCIF et dynamique moléculaire),
-- La **fabrication assistée par ordinateur** (Usinage CNC 3/5 axes avec G-code universel et tranchage FDM).
+- Des **prototypes de fabrication assistée** (trajectoires CAM nominales et intégration OrcaSlicer, non qualifiées pour piloter une machine).
 
-### 🏛️ Le Principe des 95 % / 5 %
-> **L'ingénierie moderne de pointe ne réinvente pas la roue** : elle assemble avec une rigueur mathématique absolue **95 % de briques géantes open source industrielles déjà éprouvées** (OpenCASCADE, Gmsh, CalculiX, IfcOpenShell, Taichi, Gemmi, Mol\*, OpenCAMlib), reliées par **5 % de colle logicielle intelligente, typée et hautement sécurisée**.
-
-```mermaid
-pie title Répartition de l'Architecture Mono
-    "Briques Industrielles Majeures (OpenCASCADE, Gmsh, CalculiX, IfcOpenShell, Taichi, Gemmi, Mol*)" : 95
-    "Colle Intelligente Mono (Providers, IPC Zero-Copy, Graphe de Scène, Agent MAC, Portes L0-L2)" : 5
-```
+### 🧭 Principe d'intégration
+Mono s'appuie sur des bibliothèques spécialisées lorsque leur usage est justifié. Les pourcentages d'intégration et de code propre ne sont pas mesurés; la présence d'une dépendance ne constitue pas une preuve de capacité opérationnelle.
 
 ---
 
@@ -158,9 +152,9 @@ result = builder.part
 
 ---
 
-### 4.3 Moteur 3 : Simulation FEA Mécanique & CFD
-- **Défeaturisation B-Rep Intelligente :** Suppression automatique des micro-détails esthétiques via `BRepAlgoAPI_Defeaturing` prévenant l'explosion inutile du nombre de nœuds.
-- **Maillage Volumique Quadratique C3D10 (Taylor-Hood) sous Gmsh :**
+### 4.3 Moteur 3 : Analyse FEA et préparation CFD
+- **Défeaturisation B-Rep :** Suppression automatique des micro-détails esthétiques via `BRepAlgoAPI_Defeaturing` prévenant l'explosion inutile du nombre de nœuds.
+- **Maillage volumique quadratique C3D10 sous Gmsh :**
   Éléments tétraédriques à **10 nœuds** (4 sommets + 6 nœuds milieux) avec polynômes d'interpolation de degré 2 :
   $$\mathbf{u}(\xi, \eta, \zeta) = \sum_{i=1}^{10} N_i(\xi, \eta, \zeta) \mathbf{u}_i$$
   *Élimine le verrouillage artificiel en cisaillement (shear locking) propre aux éléments linéaires C3D4.*
@@ -169,7 +163,7 @@ result = builder.part
   Calcul du champ de contraintes équivalentes de Von Mises :
   $$\sigma_{\text{VM}} = \sqrt{\frac{1}{2}\left[(\sigma_{xx}-\sigma_{yy})^2 + (\sigma_{yy}-\sigma_{zz})^2 + (\sigma_{zz}-\sigma_{xx})^2 + 6(\tau_{xy}^2 + \tau_{yz}^2 + \tau_{zx}^2)\right]}$$
   Diffusion temps réel sous forme de champ scalaire normalisé projeté dans Three.js (palette Viridis).
-- **Aérodynamique & CFD OpenFOAM :** Préparation modulaire des dictionnaires `blockMesh`, `snappyHexMesh` et solveur incompressible `simpleFoam`.
+- **CFD OpenFOAM — statut expérimental :** génération de fichiers de cas. La convergence et les forces ne sont pas publiées tant que le maillage, l'exécution du solveur, les résidus et le post-traitement n'ont pas été vérifiés. Un cas généré n'est pas une simulation résolue.
 
 ---
 
@@ -191,7 +185,7 @@ result = builder.part
 - **Collisions Mixtes Tissu / Solide B-Rep par Champ de Distance Signé (SDF 3D) :**
   La géométrie B-Rep est voxelisée en texture 3D de distance signée $\Phi(\mathbf{x})$. Pour tout nœud de tissu avec $\Phi(\mathbf{x}_i) < r_{\text{textile}}$ :
   $$\mathbf{x}_i \leftarrow \mathbf{x}_i + \left(r_{\text{textile}} - \Phi(\mathbf{x}_i)\right) \nabla \Phi(\mathbf{x}_i)$$
-  Garantit une cadence constante de **60 FPS sans interpénétration**.
+  La stabilité numérique et les performances doivent être mesurées sur des scènes de référence; aucune cadence universelle n'est garantie.
 
 ---
 
@@ -201,20 +195,20 @@ result = builder.part
 - **Rendu WebGL par Quads d'Imposteurs de Sphères :**
   Calcul analytique de la profondeur dans le fragment shader de Three.js :
   $$z_{\text{frag}} = z_{\text{centre}} \pm \sqrt{R^2 - (x^2 + y^2)}$$
-  Permet d'afficher simultanément plus de 500 000 atomes avec surfaces de solvant (SAS) et rubans secondaires (*Cartoon*) à 60 FPS.
+  Vise l'affichage de structures macromoléculaires détaillées; les limites de taille et les performances doivent être établies par benchmarks reproductibles.
 - **Dynamique Moléculaire OpenMM :** Minimisation d'énergie et intégration de trajectoires avec champ de force AMBER14.
 
 ---
 
 ### 4.7 Moteur 7 : Fabrication Assistée par Ordinateur
-- **Usinage CNC Soustractif (`OpenCAMlib`) :**
+- **Prototype d'usinage CNC soustractif :**
   - Outils hémisphériques (*Ball*), cylindriques plats (*Endmill*) et toroïdaux (*Bullnose*).
-  - Trajectoires Drop-Cutter 3D, passes de finition à hauteur de crête constante (*Constant Scallop*), ébauche adaptative 2.5D et contournage avec compensation de rayon.
-  - **Post-Processeur Universel Multi-DCN :** Génération de G-code certifié pour **GRBL** (routeurs & CNC d'atelier), **Fanuc 31i**, **Siemens 840D**, **Heidenhain TNC 640**, **Haas NGC** et **LinuxCNC**.
-  - Vérification volumique anti-collision outil/brut (*anti-gouging*).
-- **Fabrication Additive (Tranchage FDM OrcaSlicer CLI) :**
-  - Invocation sans tête en sous-processus isolé.
-  - Hauteurs de couches adaptatives (0.08 à 0.28 mm) selon la courbure locale, génération de supports et formats d'échange `.3mf` / `.gcode`.
+  - Génération de trajectoires nominales par stratégies géométriques simplifiées; les parcours ne remplacent pas un calcul de coupe, un modèle de brut ni une simulation machine.
+  - **Post-processeurs candidats :** formats Fanuc, Siemens, Heidenhain, Haas, LinuxCNC et GRBL. Aucun G-code n'est certifié; chaque machine/contrôleur exige qualification et validation indépendantes.
+  - Les contrôles actuels ne constituent pas une simulation complète de collision machine, porte-outil, bridage et enlèvement de matière.
+- **Fabrication additive (OrcaSlicer CLI) :**
+  - L'API exige désormais OrcaSlicer pour produire un vrai résultat de tranchage. Le générateur interne par boîte englobante est réservé à une démo explicitement non fabricable.
+  - Un G-code analysé syntaxiquement n'est pas un G-code qualifié pour une machine; le profil imprimante, le firmware, les limites thermiques et la validation opérateur restent requis.
 
 ---
 
@@ -336,8 +330,8 @@ sequenceDiagram
 
 ```bash
 # 1. Cloner le dépôt
-git clone https://github.com/jbrandonp/mono-cad-studio.git
-cd mono-cad-studio
+git clone https://github.com/jbrandonp/mono-cad.git
+cd mono-cad
 
 # 2. Synchroniser les dépendances Python via uv (ultra-rapide en 2 s)
 uv sync
@@ -442,33 +436,25 @@ Mono est distribué sous licence permissive libre (**Apache-2.0 / MIT**). Afin d
 
 ## 10. Validation de la Suite de Tests & Couverture
 
-La qualité mathématique et logicielle de l'ensemble de la plateforme est validée par une suite de **106 tests automatisés** exécutés nativement :
+### État de vérification au 25 novembre 2026
+
+Le README historique annonçait 106 tests et 83 % de couverture. L'audit statique du dépôt recense 22 fichiers de tests et 104 fonctions nommées `test_*`. Ces nombres ne sont pas équivalents à un résultat d'exécution : aucune suite complète n'a été exécutée dans le cadre du rebaselining.
+
+Les badges et pourcentages de couverture précédents ne doivent donc pas être interprétés comme des résultats actuellement revalidés. Voir [l'audit des capacités](ENGINEERING_CAPABILITY_AUDIT_2026-11-25.md).
+
+### Commande de validation à exécuter dans un environnement préparé
 
 ```bash
 uv run pytest --cov=src/mono --cov-report=term-missing
 ```
 
-### Résultats de Couverture par Fournisseur
-| Fichier & Module Métier | Lignes | Couverture | Rôle Testé |
-|---|---|---|---|
-| `scripts/vault_backup_sqlite.py`          | 265 | **100%**| Sauvegarde hybride & dump SQLite Vault |
-| `src/mono/providers/techdraw_drafting.py` | 403 | **98%** | Plans PDF ISO/ASME, cotation & GD&T |
-| `src/mono/providers/biomolecule_openmm.py`| 166 | **96%** | Dynamique moléculaire OpenMM |
-| `src/mono/providers/cam_machining.py`     | 329 | **95%** | Usinage CNC, G-code Fanuc & GRBL |
-| `src/mono/providers/additive_slicer.py`   | 243 | **95%** | Tranchage FDM & DfAM OrcaSlicer |
-| `src/mono/vision/quad_view_generator.py`  | 110 | **95%** | Planche composite 4 vues cotées |
-| `src/mono/security/ast_validator.py`      | 31  | **94%** | Bac à sable AST anti-injection |
-| `src/mono/providers/bim_ifc.py`           | 378 | **92%** | Bâtiments IFC4 & coupes 2D HLR |
-| `src/mono/core/document.py`               | 103 | **90%** | Graphe de scène sémantique |
-| `src/mono/providers/biomolecule_gemmi.py` | 581 | **89%** | Cristallographie PDB & BinaryCIF |
-| `src/mono/core/command.py`                | 103 | **88%** | Transactions Undo/Redo zstd < 5 ms |
-| `src/mono/agent/cadengbench_gates.py`     | 322 | **88%** | Portes déterministes L0, L1, L2-Z, L2-E, L3 FEA |
-| `src/mono/providers/cfd_openfoam.py`      | 193 | **88%** | Préparation de cas CFD OpenFOAM |
-| `src/mono/providers/fea_gmsh.py`          | 404 | **87%** | Maillage Gmsh C3D10 & CalculiX |
-| `src/mono/agent/mac_orchestrator.py`      | 143 | **85%** | Boucle cybernétique multi-agents |
-| `src/mono/core/archive_mono.py`           | 202 | **86%** | Sérialisation conteneur `.mono` |
-| `src/mono/sketch/planegcs_solver.py`      | 276 | **82%** | Solveur d'esquisse 2D contrainte |
-| **TOTAL GLOBAL**                          | **5943** | **83%** | **106/106 tests passés (100% succès)** |
+Une validation future devra également inclure :
+- tests d'intégration avec versions précises des solveurs externes ;
+- jeux de référence numériques et comparaison des résultats ;
+- tests de convergence et d'indépendance au maillage ;
+- vérification de provenance des entrées, sorties et versions ;
+- tests d'API et d'interface ;
+- tests de sécurité, résilience et compatibilité.
 
 ---
 
