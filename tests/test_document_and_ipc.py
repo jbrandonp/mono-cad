@@ -1,5 +1,6 @@
 import json
 import build123d as bd
+import pytest
 from starlette.testclient import TestClient
 
 from mono.core.document import MonoDocument
@@ -41,8 +42,9 @@ def test_document_parameters_and_entities() -> None:
     assert "ent_01" in summary["entities"]
 
 
-def test_fastapi_rest_and_websocket() -> None:
+def test_fastapi_rest_and_websocket(monkeypatch: pytest.MonkeyPatch) -> None:
     """Vérifie les endpoints REST et le canal WebSocket bidirectionnel."""
+    monkeypatch.setenv("MONO_ENABLE_UNSAFE_INPROCESS_ECIP", "1")
     client = TestClient(app)
 
     # 1. Health check
