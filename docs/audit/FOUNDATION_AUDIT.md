@@ -1,7 +1,7 @@
 # Mono — Audit de reconstruction depuis la base
-Date : 25 novembre 2026
-Base : master de jbrandonp/mono-cad
-Méthode : inspection statique des fichiers source, manifestes, tests et arborescences GitHub. Aucun test/build local ni aucun solveur n'a été exécuté pendant cet audit.
+Date : 26 novembre 2026
+Base : branche foundation-reset-2026-11; dernier CI multiplateforme vérifié sur commit 99624cc6506898bd4d10826662526ef6fe8bd83d.
+Méthode : inspection statique du dépôt, des fichiers de la Library, des manifestes et des logs GitHub Actions. Aucun solveur CalculiX/OrcaSlicer n'a été lancé par ce CI.
 
 ## Règle de vérité
 Les statuts de ce rapport signifient :
@@ -143,3 +143,18 @@ Adopter une gouvernance VVUQ inspirée de NASA-STD-7009B / NASA-HDBK-7009B et de
 
 ## 7. Limites
 Audit statique. Aucun test/build n'a été exécuté, aucun solveur lancé, aucune machine locale inspectée, aucun calcul certifié. Les prochaines étapes doivent établir une CI et des preuves reproductibles.
+
+
+## 10. Ré-audit transversal E01–E70 (E71)
+
+Le 26 novembre 2026, la Library Mono V2 a été réanalysée. E01–E51 et E70 sont lisibles; E52–E69 sont visibles en métadonnées comme 18 ZIP mais leur contenu n'a pas pu être matérialisé en raison de l'absence de chemin d'octets autorisé pour les pièces jointes Project. Aucun statut n'est attribué à leur contenu.
+
+Le décompte vérifié des CSV de portes, avec détection du séparateur réel et normalisation des colonnes d'état, est de **546 portes OPEN dans E22–E51**, auxquelles s'ajoutent **20 portes OPEN dans E70**, soit **566 portes OPEN connues**. E13 compte séparément 15 critères de sortie dont 7 marqués Bloquant. E71 ajoute 18 portes de re-audit OPEN. Le chiffre antérieur de 506 portes E22–E51 est corrigé.
+
+Le package E70 contient 12 artefacts de manifeste; son ZIP passe le contrôle CRC et les 12 tailles/SHA-256 vérifiés correspondent. L'index v2.40 pointe cependant vers un chemin de dossier erroné pour les documents E70; le nouveau master v2.41 corrige le chemin.
+
+Le dernier run CI complet a réussi sous Windows, Linux et macOS sur le commit 99624cc : 111 tests passés, 12 ignorés et 3 avertissements par environnement; le build frontend est réussi. Les 12 tests ignorés dépendent de CalculiX, OrcaSlicer ou d'une archive de démonstration absente. Le workflow Linux installe libGLU/libGL pour Gmsh/OCP. Ces tests ignorés ne valident aucun solveur physique.
+
+Les défauts structurants toujours ouverts sont : E23–E27 non ratifiés; PostgreSQL non ratifié/non implémenté; absence de sandbox OS; absence de queue durable et outbox; restauration .mono des sidecars/provider state non démontrée sans perte; FEA legacy peut utiliser des valeurs matériaux/conditions limites implicites; study/result restent couplés aux providers d'entités; qualification SolverExecution insuffisamment attestée; Tauri install/build non vérifié; SLI/SLO E70 non activés; EM, multibody, topology optimization, durée de vie, PLM complet, Big Data et natural systems non démontrés.
+
+Le nouveau référentiel actif V3.1 et E71 sont publiés dans la Library. La branche GitHub reste une PR draft non fusionnée. Aucun domaine n'est déclaré industriellement qualifié.
