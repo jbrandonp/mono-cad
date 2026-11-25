@@ -65,6 +65,8 @@ class GCodeAnalysis:
     has_heating: bool
     has_homing: bool
     is_valid: bool
+    generation_method: str = "unknown"
+    fabrication_ready: bool = False
 
 
 class AdditiveSlicerProvider(GeometryProvider):
@@ -182,40 +184,75 @@ class AdditiveSlicerProvider(GeometryProvider):
         nozzle_temp_c: int = 215,
         bed_temp_c: int = 60,
         use_orcaslicer: bool = True,
+        allow_demo_fallback: bool = False,
     ) -> GCodeAnalysis:
-        """Génère le G-code de fabrication via OrcaSlicer CLI ou le générateur déterministe interne."""
+        """Génère un G-code réel avec OrcaSlicer ou, sur demande explicite, une démo non fabricable.
+
+        Le générateur de démonstration ne calcule pas les contours réels de chaque couche.
+        Il ne doit jamais être utilisé pour piloter une imprimante ou fabriquer une pièce.
+        """
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
         stl_path = out_path / "part_to_slice.stl"
         gcode_path = out_path / "part_toolpath.gcode"
 
-        # Export STL haute fidélité
         bd.export_stl(self.part, str(stl_path), tolerance=0.001)
 
-        # Tentative d'exécution via OrcaSlicer autonome si présent
-        executed_orcaslicer = False
-        if use_orcaslicer and is_orcaslicer_available():
-            try:
+        generation_method: str
+        if use_orcaslicer:
+            if not is_orcaslicer_available():
+                if not allow_demo_fallback:
+                    raise FileNotFoundError(
+                        "OrcaSlicer est indisponible. Le repli par boîte englobante est une démo "
+                        "non fabricable; activez allow_demo_fallback uniquement pour un aperçu."
+                    )
+                generation_method = "demo_bbox_only"
+            else:
                 proc = run_orcaslicer_slice(stl_path, gcode_path, timeout_seconds=60.0)
-                if proc.returncode == 0 and gcode_path.exists() and gcode_path.stat().st_size > 50:
-                    with open(gcode_path, "r", encoding="utf-8", errors="ignore") as f:
-                        self.cached_gcode = f.read()
-                    executed_orcaslicer = True
-            except Exception:
-                executed_orcaslicer = False
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        "OrcaSlicer a échoué "
+                        f"(code {proc.returncode}). stdout={proc.stdout[-2000:]} "
+                        f"stderr={proc.stderr[-2000:]}"
+                    )
+                if not gcode_path.exists() or gcode_path.stat().st_size <= 50:
+                    raise RuntimeError("OrcaSlicer n'a pas produit de fichier G-code exploitable.")
+                self.cached_gcode = gcode_path.read_text(encoding="utf-8", errors="ignore")
+                generation_method = "orcaslicer"
+        else:
+            if not allow_demo_fallback:
+                raise ValueError(
+                    "Le tranchage sans OrcaSlicer n'est disponible qu'en mode démo explicite."
+                )
+            generation_method = "demo_bbox_only"
 
-        if not executed_orcaslicer:
-            # Génération analytique déterministe conforme ISO 6983
+        if generation_method == "demo_bbox_only":
             self.cached_gcode = self._generate_analytical_gcode(
                 layer_height_mm=layer_height_mm,
                 infill_percent=infill_percent,
                 nozzle_temp_c=nozzle_temp_c,
                 bed_temp_c=bed_temp_c,
             )
-            with open(gcode_path, "w", encoding="utf-8") as f:
-                f.write(self.cached_gcode)
+            demo_path = out_path / "demo_bbox_only_NOT_FOR_FABRICATION.gcode"
+            demo_path.write_text(self.cached_gcode, encoding="utf-8")
 
-        return self.analyze_gcode(self.cached_gcode)
+        analysis = self.analyze_gcode(self.cached_gcode)
+        return GCodeAnalysis(
+            total_lines=analysis.total_lines,
+            layer_count=analysis.layer_count,
+            max_z_mm=analysis.max_z_mm,
+            filament_length_mm=analysis.filament_length_mm,
+            filament_volume_cm3=analysis.filament_volume_cm3,
+            estimated_mass_grams=analysis.estimated_mass_grams,
+            estimated_time_seconds=analysis.estimated_time_seconds,
+            bed_temp_c=analysis.bed_temp_c,
+            nozzle_temp_c=analysis.nozzle_temp_c,
+            has_heating=analysis.has_heating,
+            has_homing=analysis.has_homing,
+            is_valid=analysis.is_valid,
+            generation_method=generation_method,
+            fabrication_ready=False,
+        )
 
     def _generate_analytical_gcode(
         self,
