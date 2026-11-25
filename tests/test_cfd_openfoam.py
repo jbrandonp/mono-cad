@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 import build123d as bd
 
 from mono.providers.cfd_openfoam import (
@@ -105,8 +106,8 @@ def test_cfd_openfoam_case_generation_end_to_end() -> None:
         assert "castellatedMesh" in snappy_file.read_text(encoding="utf-8")
 
 
-def test_cfd_simulation_analytical_report() -> None:
-    """Vérifie le calcul des grandeurs aérodynamiques (traînée, portance, Cd)."""
+def test_cfd_does_not_claim_convergence_without_solver() -> None:
+    """Un cas généré sans exécutables OpenFOAM n'est jamais présenté comme résolu."""
     part = bd.Box(50.0, 20.0, 10.0)
     provider = CfdOpenFoamProvider(
         entity_id="car_spoiler",
@@ -116,11 +117,14 @@ def test_cfd_simulation_analytical_report() -> None:
 
     with tempfile.TemporaryDirectory() as tmp_str:
         run_dir = Path(tmp_str) / "run_spoiler"
-        report = provider.simulate(run_dir)
+        with patch("mono.providers.cfd_openfoam.shutil.which", return_value=None):
+            report = provider.simulate(run_dir)
 
-        assert report.drag_force_n > 0.0
-        assert report.drag_coefficient_cd > 0.05
-        assert report.num_iterations == 300
+        assert report.status == "SOLVER_UNAVAILABLE"
+        assert report.solver_executed is False
+        assert report.converged is False
+        assert report.drag_force_n is None
+        assert report.drag_coefficient_cd is None
         assert Path(report.case_path).exists()
 
 
