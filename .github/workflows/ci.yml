@@ -7,7 +7,7 @@ on:
     branches: [master]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   python-windows:
@@ -30,22 +30,18 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
-      - name: Regenerate stale Bun lockfile
+      - name: Regenerate frontend lockfile in the CI workspace
         working-directory: frontend
         run: bun install
-      - name: Commit regenerated lockfile on the reconstruction branch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/foundation-reset-2026-11'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add frontend/bun.lock
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(frontend): regenerate Bun lockfile"
-            git push
-          fi
       - name: Verify frozen lockfile installation
         working-directory: frontend
         run: bun install --frozen-lockfile
       - name: Type-check and build frontend
         working-directory: frontend
         run: bun run build
+      - name: Publish regenerated Bun lockfile for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-bun-lockfile
+          path: frontend/bun.lock
+          if-no-files-found: error
