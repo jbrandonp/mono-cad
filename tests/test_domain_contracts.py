@@ -77,3 +77,22 @@ def test_execution_requires_explicit_convergence_before_verification() -> None:
 def test_sha256_is_deterministic() -> None:
     assert sha256_hex(b"mono") == sha256_hex(b"mono")
     assert len(sha256_hex(b"mono")) == 64
+
+
+def test_quantity_rejects_dimension_mismatch() -> None:
+    with pytest.raises(ValidationError, match="pas 'length'"):
+        Quantity(value=12.0, unit="MPa", dimension="length")
+
+
+def test_quantity_converts_units_without_losing_uncertainty() -> None:
+    q = Quantity(value=250.0, unit="mm", dimension="length", uncertainty=0.5)
+    metres = q.to("m")
+    assert metres.value == pytest.approx(0.25)
+    assert metres.uncertainty == pytest.approx(0.0005)
+    assert metres.unit == "m"
+
+
+def test_quantity_converts_temperature_with_offset() -> None:
+    celsius = Quantity(value=20.0, unit="degC", dimension="temperature")
+    kelvin = celsius.to("K")
+    assert kelvin.value == pytest.approx(293.15)
