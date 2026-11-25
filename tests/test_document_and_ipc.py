@@ -162,3 +162,11 @@ def test_parametric_update_rolls_back_when_ecip_is_disabled(monkeypatch: pytest.
 
     assert doc.parameters["width"].value == 20.0
     assert doc.entities["part_rollback"].provider is original_provider
+
+
+def test_parameter_registration_rejects_invalid_bounds() -> None:
+    doc = MonoDocument()
+    with pytest.raises(ValueError, match="borne minimale"):
+        doc.register_parameter("bad", 1.0, 5.0, 2.0, "mm")
+    with pytest.raises(ValueError, match="finies"):
+        doc.register_parameter("nan", float("nan"), 0.0, 10.0, "mm")
