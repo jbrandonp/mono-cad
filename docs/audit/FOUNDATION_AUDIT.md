@@ -12,6 +12,13 @@ Les statuts de ce rapport signifient :
 
 Les mentions historiques « certifié », « 100 % », « industriel », « incassable » et « prêt en production » ne sont pas acceptées comme preuves. Un skill n'est pas un moteur de calcul; un test unitaire ne vaut pas validation physique.
 
+## 0 bis. Correctifs déjà introduits sur la branche de reconstruction
+- Contrats de domaine V2 initiaux ajoutés dans src/mono/domain/models.py avec quantités explicites, références d'artefacts, études, solveurs et transitions de crédibilité exigeant des preuves.
+- L'exécution ECIP dans le processus backend est maintenant désactivée par défaut. Le flag MONO_ENABLE_UNSAFE_INPROCESS_ECIP=1 ne doit servir qu'aux tests et environnements jetables; ce mode reste non isolé.
+- Le lecteur .mono valide les noms de membres, refuse liens et types non réguliers, borne les tailles, contrôle le manifeste, les identifiants, les hashes et les tailles des artefacts, et borne les entrées compressées/gzip.
+- Tests d'intégration dépendant de CalculiX ou de l'archive démo sont explicitement ignorés lorsque ces binaires/artefacts ne sont pas présents. Cela ne signifie pas que les domaines FEA ou démo sont validés.
+- CI Windows Python et frontend Bun a été ajoutée. Les résultats sont à consulter sur les runs GitHub; la création du workflow ne constitue pas un test réussi.
+
 ## 1. État réel du dépôt
 Le dépôt master compte 114 entrées Git. Il comprend :
 - Backend Python 3.12 / FastAPI / Pydantic.
