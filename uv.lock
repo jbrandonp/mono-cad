@@ -614,6 +614,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "build123d" },
+    { name = "ezdxf" },
     { name = "fastapi" },
     { name = "fpdf2" },
     { name = "gemmi" },
