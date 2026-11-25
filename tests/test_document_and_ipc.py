@@ -1,8 +1,9 @@
 import json
 import build123d as bd
+import pytest
 from starlette.testclient import TestClient
 
-from mono.core.document import MonoDocument
+from mono.core.document import MonoDocument, ParameterRebuildError
 from mono.providers.brep_build123d import BRepBuild123dProvider
 from mono.ipc.server import app, state
 
@@ -41,8 +42,9 @@ def test_document_parameters_and_entities() -> None:
     assert "ent_01" in summary["entities"]
 
 
-def test_fastapi_rest_and_websocket() -> None:
+def test_fastapi_rest_and_websocket(monkeypatch: pytest.MonkeyPatch) -> None:
     """Vérifie les endpoints REST et le canal WebSocket bidirectionnel."""
+    monkeypatch.setenv("MONO_ENABLE_UNSAFE_INPROCESS_ECIP", "1")
     client = TestClient(app)
 
     # 1. Health check
@@ -140,3 +142,31 @@ PARAMS["w"] = w
         ws.send_text(json.dumps({"type": "redo"}))
         redo_resp = ws.receive_json()
         assert redo_resp["type"] == "redo_performed"
+
+
+def test_parametric_update_rolls_back_when_ecip_is_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed dependent rebuild must not leave parameters and geometry inconsistent."""
+    monkeypatch.delenv("MONO_ENABLE_UNSAFE_INPROCESS_ECIP", raising=False)
+    doc = MonoDocument()
+    doc.register_parameter("width", 20.0, 5.0, 100.0, "mm", "Width")
+    original_provider = BRepBuild123dProvider("part_rollback", bd.Box(20, 10, 10))
+    doc.add_entity("part_rollback", original_provider)
+    doc.attach_parametric_source(
+        "part_rollback",
+        "RESULT_PART = bd.Box(PARAMS.get('width', 20.0), 10, 10)",
+        ["width"],
+    )
+
+    with pytest.raises(ParameterRebuildError, match="aucun changement n'a été appliqué"):
+        doc.update_parameter("width", 40.0)
+
+    assert doc.parameters["width"].value == 20.0
+    assert doc.entities["part_rollback"].provider is original_provider
+
+
+def test_parameter_registration_rejects_invalid_bounds() -> None:
+    doc = MonoDocument()
+    with pytest.raises(ValueError, match="borne minimale"):
+        doc.register_parameter("bad", 1.0, 5.0, 2.0, "mm")
+    with pytest.raises(ValueError, match="finies"):
+        doc.register_parameter("nan", float("nan"), 0.0, 10.0, "mm")

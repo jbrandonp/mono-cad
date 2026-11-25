@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Mapping
 
 from mono.core.geometry_provider import GeometryProvider, BinaryMeshPayload, ValidationReport
 from mono.core.command import CommandHistory
+
+
+class ParameterRebuildError(RuntimeError):
+    """Raised when a parameter change cannot rebuild every dependent entity atomically."""
 
 
 @dataclass
@@ -84,6 +89,14 @@ class MonoDocument:
             unit: Symbole de l'unité (ex: 'm', 'mm', 'deg').
             label: Libellé d'affichage convivial pour l'utilisateur.
         """
+        if not all(math.isfinite(v) for v in (value, min_value, max_value)):
+            raise ValueError("Les valeurs de paramètre doivent être finies.")
+        if min_value > max_value:
+            raise ValueError("La borne minimale ne peut pas dépasser la borne maximale.")
+        if not min_value <= value <= max_value:
+            raise ValueError("La valeur initiale doit être comprise dans les bornes.")
+        if not unit:
+            raise ValueError("L'unité du paramètre est obligatoire.")
         self.parameters[name] = ParameterDefinition(
             value=value,
             min_value=min_value,
@@ -93,46 +106,58 @@ class MonoDocument:
         )
 
     def update_parameter(self, name: str, new_value: float) -> None:
-        """Met à jour la valeur d'un paramètre existant en respectant ses bornes.
+        """Apply a parameter update atomically across all dependent parametric entities.
 
-        Déclenche immédiatement la re-tessellation B-Rep des entités paramétriques liées (< 50 ms).
-
-        Args:
-            name: Nom du paramètre à mettre à jour.
-            new_value: Nouvelle valeur numérique.
-
-        Raises:
-            KeyError: Si le paramètre n'existe pas.
+        If any dependent script cannot be evaluated, neither the parameter value
+        nor any entity provider is changed. The legacy in-process ECIP executor is
+        disabled by default and will therefore fail closed until an isolated worker
+        is available.
         """
         if name not in self.parameters:
             raise KeyError(f"Paramètre inconnu : '{name}'")
 
+        if not math.isfinite(new_value):
+            raise ValueError("La nouvelle valeur du paramètre doit être finie.")
         param = self.parameters[name]
         clamped = max(param.min_value, min(new_value, param.max_value))
-        param.value = clamped
+        candidate_values = {key: value.value for key, value in self.parameters.items()}
+        candidate_values[name] = clamped
 
-        # Re-tessellation paramétrique à la volée (< 50 ms) pour toutes les entités liées
-        all_param_values = {k: v.value for k, v in self.parameters.items()}
+        affected = [
+            rec for rec in self.entities.values()
+            if rec.script_code and name in rec.bound_parameters
+        ]
+        if not affected:
+            param.value = clamped
+            return
+
         from mono.execution.ecip_executor import execute_ecip_cad_block
         from mono.providers.brep_build123d import BRepBuild123dProvider
 
-        for rec in self.entities.values():
-            if rec.script_code and name in rec.bound_parameters:
-                try:
-                    res = execute_ecip_cad_block(
-                        rec.script_code,
-                        param_overrides=all_param_values,
-                        unit_scale_to_meters=rec.scale_to_meters,
-                    )
-                    rec.provider = BRepBuild123dProvider(
-                        entity_id=rec.entity_id,
-                        part=res.part,
-                        unit_scale_to_meters=rec.scale_to_meters,
-                    )
-                    rec.is_dirty = True
-                except Exception:
-                    # En cas de valeur temporaire non reconstructible, préserver le solide antérieur
-                    pass
+        staged_providers: dict[str, BRepBuild123dProvider] = {}
+        try:
+            for rec in affected:
+                result = execute_ecip_cad_block(
+                    rec.script_code or "",
+                    param_overrides=candidate_values,
+                    unit_scale_to_meters=rec.scale_to_meters,
+                )
+                staged_providers[rec.entity_id] = BRepBuild123dProvider(
+                    entity_id=rec.entity_id,
+                    part=result.part,
+                    unit_scale_to_meters=rec.scale_to_meters,
+                )
+        except Exception as exc:
+            raise ParameterRebuildError(
+                f"Modification du paramètre '{name}' annulée : au moins une entité "
+                "dépendante n'a pas pu être reconstruite; aucun changement n'a été appliqué."
+            ) from exc
+
+        # Commit staged state only after every dependent entity has rebuilt successfully.
+        param.value = clamped
+        for rec in affected:
+            rec.provider = staged_providers[rec.entity_id]
+            rec.is_dirty = True
 
     def attach_parametric_source(
         self,

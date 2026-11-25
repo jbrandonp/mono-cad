@@ -9,6 +9,12 @@ from mono.agent.cadengbench_gates import CADEngBenchGatekeeper
 from mono.ipc.server import app, state
 
 
+@pytest.fixture(autouse=True)
+def _enable_legacy_ecip_for_orchestrator_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Tests exercise the legacy generator; production remains fail-closed by default.
+    monkeypatch.setenv("MONO_ENABLE_UNSAFE_INPROCESS_ECIP", "1")
+
+
 @pytest.mark.asyncio
 async def test_mac_orchestrator_successful_flow() -> None:
     """Vérifie le déroulement nominal du pipeline MAC en 5 étapes."""

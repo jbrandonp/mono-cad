@@ -3,8 +3,9 @@ from mono.execution.ecip_executor import execute_ecip_cad_block, ECIPExecutionEr
 from mono.security.ast_validator import SecurityViolationError
 
 
-def test_execute_ecip_success() -> None:
+def test_execute_ecip_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """Vérifie l'exécution réussie d'un bloc ECIP avec paramètres et sélecteurs."""
+    monkeypatch.setenv("MONO_ENABLE_UNSAFE_INPROCESS_ECIP", "1")
     script = """
 import build123d as bd
 
@@ -32,8 +33,9 @@ SELECTORS["top_face"] = lambda p: p.faces().sort_by(bd.Axis.Z)[-1]
     assert len(result.named_faces["top_face"]) == 1
 
 
-def test_execute_ecip_missing_result_part() -> None:
+def test_execute_ecip_missing_result_part(monkeypatch: pytest.MonkeyPatch) -> None:
     """Vérifie qu'un script sans RESULT_PART est rejeté."""
+    monkeypatch.setenv("MONO_ENABLE_UNSAFE_INPROCESS_ECIP", "1")
     script = """
 import build123d as bd
 x = 10
@@ -49,4 +51,17 @@ import os
 RESULT_PART = None
 """
     with pytest.raises(SecurityViolationError):
+        execute_ecip_cad_block(script)
+
+
+def test_execute_ecip_is_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The AST filter must never be presented as a process sandbox."""
+    monkeypatch.delenv("MONO_ENABLE_UNSAFE_INPROCESS_ECIP", raising=False)
+    script = """
+import build123d as bd
+with bd.BuildPart() as part:
+    bd.Box(10, 10, 10)
+RESULT_PART = part.part
+"""
+    with pytest.raises(ECIPExecutionError, match="n'est pas un bac à sable"):
         execute_ecip_cad_block(script)

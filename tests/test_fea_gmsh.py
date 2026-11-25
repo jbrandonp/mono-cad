@@ -1,11 +1,22 @@
-"""Tests complets de validation du moteur d'analyse par éléments finis (FEA) Gmsh & CalculiX."""
+"""Tests d'intégration du moteur FEA Gmsh + CalculiX.
+
+Ces tests nécessitent un véritable exécutable CalculiX accessible sur PATH.
+"""
 
 from __future__ import annotations
 
 import json
 import build123d as bd
 import numpy as np
+import pytest
 from starlette.testclient import TestClient
+
+from mono.execution.workers import is_ccx_available
+
+pytestmark = pytest.mark.skipif(
+    not is_ccx_available(),
+    reason="CalculiX absent : tests FEA end-to-end reportés, aucun résultat simulé.",
+)
 
 from mono.providers.fea_gmsh import (
     FeaGmshProvider,

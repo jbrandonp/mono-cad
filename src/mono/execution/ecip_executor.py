@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import build123d as bd
 from OCP.BRepCheck import BRepCheck_Analyzer
 
@@ -44,7 +45,7 @@ def execute_ecip_cad_block(
     param_overrides: dict[str, float] | None = None,
     unit_scale_to_meters: float = 0.001,
 ) -> ECIPExecutionResult:
-    """Exécute un bloc de code CAO déclaratif build123d/ECIP dans un bac à sable sécurisé.
+    """Exécute le mode legacy ECIP dans le processus courant (non isolé).
 
     Args:
         script_code: Code source Python généré par l'IA ou chargé depuis un fichier.
@@ -58,10 +59,19 @@ def execute_ecip_cad_block(
         SecurityViolationError: Si le script enfreint les règles du bac à sable AST.
         ECIPExecutionError: Si le script produit une erreur ou un solide B-Rep invalide.
     """
-    # 1. Analyse statique obligatoire du code source AST
+    # 1. Prévalidation AST. Ce filtre n'est PAS une frontière de sécurité.
     validate_cad_script(script_code)
 
-    # 2. Préparation du bac à sable restreint (zéro accès OS, réseau ou introspection)
+    # 2. Fail-closed : l'exécution dans le processus API/UI n'est pas autorisée par défaut.
+    # Le flag n'est destiné qu'aux environnements locaux jetables et aux tests de migration.
+    if os.environ.get("MONO_ENABLE_UNSAFE_INPROCESS_ECIP") != "1":
+        raise ECIPExecutionError(
+            "L'exécution ECIP dans le processus Mono est désactivée : le filtre AST "
+            "n'est pas un bac à sable. Utiliser un worker isolé; le mode legacy "
+            "ne peut être activé que temporairement via MONO_ENABLE_UNSAFE_INPROCESS_ECIP=1."
+        )
+
+    # 3. Préparation d'un espace de noms restreint (ce n'est pas une isolation OS)
     sandbox_globals: dict[str, object] = {
         "bd": bd,
         "__builtins__": {
@@ -85,7 +95,7 @@ def execute_ecip_cad_block(
         "SELECTORS": {},
     }
 
-    # 3. Compilation et exécution sécurisée
+    # 4. Compilation et exécution legacy (processus courant, non isolé)
     try:
         compiled_code = compile(script_code, filename="<ecip_block>", mode="exec")
         exec(compiled_code, sandbox_globals, sandbox_locals)

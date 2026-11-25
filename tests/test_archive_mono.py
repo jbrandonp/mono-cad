@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import tarfile
@@ -86,12 +87,14 @@ def test_mono_archive_sha256_corruption_detection() -> None:
         fake_manifest = {
             "format": "mono-archive",
             "schema_version": "1.0.0",
+            "entities_count": 1,
             "entities": [
                 {
                     "entity_id": "cube",
                     "provider_name": "brep_build123d",
                     "file_path": "brep/cube.step",
                     "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "size_bytes": len(cube_step),
                 }
             ],
         }
@@ -207,3 +210,42 @@ async def test_mono_archive_api_endpoints() -> None:
         data_imp = res_import.json()
         assert data_imp["status"] == "success"
         assert data_imp["entities_restored"] >= 1
+
+
+def test_archive_rejects_path_traversal_member() -> None:
+    """Rejects unsafe member names before manifest or payload restoration."""
+    with pytest.raises(MonoArchiveError):
+        MonoArchive._validate_member_name("../outside.txt")
+    with pytest.raises(MonoArchiveError):
+        MonoArchive._validate_member_name("folder\\\\outside.txt")
+
+
+def test_archive_rejects_symlink_members() -> None:
+    """A .mono archive must contain regular files only."""
+    tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+        manifest = json.dumps({"format": "mono-archive", "entities": []}).encode("utf-8")
+        manifest_info = tarfile.TarInfo("manifest.json")
+        manifest_info.size = len(manifest)
+        tar.addfile(manifest_info, io.BytesIO(manifest))
+
+        link = tarfile.TarInfo("misc/link")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../outside.txt"
+        tar.addfile(link)
+
+    with pytest.raises(MonoArchiveError):
+        MonoArchive.inspect(tar_buf.getvalue())
+
+
+def test_archive_rejects_compressed_input_over_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(MonoArchive, "MAX_COMPRESSED_BYTES", 8)
+    with pytest.raises(MonoArchiveError, match="compressée trop volumineuse"):
+        MonoArchive._read_archive_bytes(b"x" * 9)
+
+
+def test_archive_rejects_gzip_decompression_bomb(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(MonoArchive, "MAX_ARCHIVE_BYTES", 64)
+    compressed = gzip.compress(b"x" * 4096)
+    with pytest.raises(MonoArchiveError, match="décompressée trop volumineuse"):
+        MonoArchive._decompress_to_tar(compressed)

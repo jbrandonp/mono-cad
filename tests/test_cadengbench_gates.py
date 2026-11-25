@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import build123d as bd
+import pytest
+from mono.execution.workers import is_ccx_available
+
 from mono.core.document import MonoDocument
 from mono.providers.brep_build123d import BRepBuild123dProvider
 from mono.agent.cadengbench_gates import (
@@ -91,8 +94,9 @@ def test_gate_l1_target_dimensions_match() -> None:
     assert res_bad.is_valid is False
 
 
-def test_gate_l2_z_parametric_robustness() -> None:
+def test_gate_l2_z_parametric_robustness(monkeypatch: pytest.MonkeyPatch) -> None:
     """Vérifie que la porte L2-Z teste les variations ±10% sur les paramètres."""
+    monkeypatch.setenv("MONO_ENABLE_UNSAFE_INPROCESS_ECIP", "1")
     script = """import build123d as bd
 length = PARAMS.get("length", 100.0)
 width = PARAMS.get("width", 50.0)
@@ -158,6 +162,7 @@ def test_full_cadengbench_evaluation_and_dict() -> None:
     assert data["l3"] is None
 
 
+@pytest.mark.skipif(not is_ccx_available(), reason="CalculiX absent : validation L3 non exécutée.")
 def test_gate_l3_structural_fea_safe() -> None:
     """Vérifie que la Porte L3 valide une pièce sous charge dont la contrainte reste sous Re / 1.5."""
     bar = bd.Box(10.0, 10.0, 50.0)
@@ -176,6 +181,7 @@ def test_gate_l3_structural_fea_safe() -> None:
     assert "Conforme" in res.details or "conforme" in res.details
 
 
+@pytest.mark.skipif(not is_ccx_available(), reason="CalculiX absent : validation L3 non exécutée.")
 def test_gate_l3_structural_fea_overload_rejection() -> None:
     """Vérifie que la Porte L3 rejette automatiquement une pièce en surcharge (sigma_max > Re / 1.5)."""
     bar = bd.Box(10.0, 10.0, 50.0)
@@ -195,6 +201,7 @@ def test_gate_l3_structural_fea_overload_rejection() -> None:
     assert "excessive" in res.error.lower() or "plastification" in res.error.lower()
 
 
+@pytest.mark.skipif(not is_ccx_available(), reason="CalculiX absent : validation L3 non exécutée.")
 def test_cadengbench_gates_evaluate_all_with_l3() -> None:
     """Vérifie evaluate_all() avec intégration complète de la Porte L3 et pondération du score."""
     bar = bd.Box(12.0, 12.0, 40.0)
@@ -229,6 +236,7 @@ def test_cadengbench_gates_evaluate_all_with_l3() -> None:
     assert any("[Porte L3 FEA ÉCHOUÉE]" in d for d in res_fail.diagnostics)
 
 
+@pytest.mark.skipif(not is_ccx_available(), reason="CalculiX absent : validation L3 non exécutée.")
 def test_api_gates_evaluate_with_l3_endpoint() -> None:
     """Vérifie l'endpoint REST /api/gates/evaluate avec la Porte L3."""
     client = TestClient(app)
