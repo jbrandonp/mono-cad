@@ -179,6 +179,12 @@ class MonoArchive:
 
                     # Ajout de l'artefact dans l'archive tar
                     if artifact_bytes and file_rel_path:
+                        if not isinstance(artifact_bytes, bytes):
+                            raise MonoArchiveError(f"Le provider {p_name!r} n'a pas retourné un artefact binaire.")
+                        if len(artifact_bytes) > cls.MAX_MEMBER_BYTES:
+                            raise MonoArchiveError(f"Artefact trop volumineux pour l'archive : {file_rel_path}")
+                        if len(entities_manifest) >= cls.MAX_MEMBERS - 1:
+                            raise MonoArchiveError("Nombre maximal d'entités dépassé pour l'archive .mono")
                         tar_info = tarfile.TarInfo(name=file_rel_path)
                         tar_info.size = len(artifact_bytes)
                         tar_info.mtime = int(datetime.now(timezone.utc).timestamp())
@@ -216,6 +222,8 @@ class MonoArchive:
             }
 
             manifest_bytes = json.dumps(manifest_dict, indent=2).encode("utf-8")
+            if len(manifest_bytes) > cls.MAX_MANIFEST_BYTES:
+                raise MonoArchiveError("Manifeste .mono trop volumineux")
             man_info = tarfile.TarInfo(name="manifest.json")
             man_info.size = len(manifest_bytes)
             man_info.mtime = int(datetime.now(timezone.utc).timestamp())
@@ -223,8 +231,12 @@ class MonoArchive:
 
         # Compression Zstandard haute performance (niveau 3) avec somme de contrôle d'intégrité
         raw_tar_data = tar_buf.getvalue()
+        if len(raw_tar_data) > cls.MAX_ARCHIVE_BYTES:
+            raise MonoArchiveError("Archive .mono décompressée trop volumineuse")
         cctx = zstd.ZstdCompressor(level=3, write_checksum=True)
         compressed_mono = cctx.compress(raw_tar_data)
+        if len(compressed_mono) > cls.MAX_COMPRESSED_BYTES:
+            raise MonoArchiveError("Archive .mono compressée trop volumineuse")
 
         # Sauvegarde sur disque si chemin spécifié
         if isinstance(output_file_or_path, str):
