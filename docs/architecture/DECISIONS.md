@@ -1,6 +1,6 @@
 # Mono — Décisions d'architecture (ADR)
-Date : 25 novembre 2026
-Statut : décisions de conception proposées; les ADR qui nécessitent un prototype restent conditionnels.
+Date : 26 novembre 2026
+Statut : décisions de conception proposées; les ADR qui nécessitent un prototype restent conditionnels. E71 confirme qu'aucune ratification globale n'a été établie.
 
 ## ADR-001 — Monolithe modulaire local-first
 **Décision :** commencer avec un monolithe modulaire à frontières de domaines explicites et des workers de calcul séparés.
@@ -9,8 +9,8 @@ Statut : décisions de conception proposées; les ADR qui nécessitent un protot
 
 **Conséquence :** chaque domaine expose des ports et contrats indépendants; pas d'import transversal des providers concrets dans les règles métier.
 
-## ADR-002 — PostgreSQL comme source de vérité transactionnelle
-**Décision cible :** PostgreSQL pour projets, objets, révisions, relations, permissions, événements, jobs et métadonnées d'artefacts. SQLite peut rester cache/préférences/tests.
+## ADR-002 — PostgreSQL comme cible proposée de source de vérité transactionnelle (non ratifiée)
+**Décision cible proposée, non ratifiée :** PostgreSQL pour projets, objets, révisions, relations, permissions, événements, jobs et métadonnées d'artefacts. SQLite peut rester cache/préférences/tests.
 
 **Pourquoi :** cohérence transactionnelle, concurrence, contraintes relationnelles, JSONB, outbox et trajectoire vers plusieurs utilisateurs/serveurs. Le stockage des gros binaires est séparé.
 
@@ -59,3 +59,11 @@ Statut : décisions de conception proposées; les ADR qui nécessitent un protot
 **Décision :** aucun statut général « certifié industriel ». La qualification s'applique à un couple domaine/version moteur/cas d'usage/environnement, avec preuves et limites.
 
 **Pourquoi :** la crédibilité d'un solveur structurel ne se transfère pas automatiquement à la CFD, à la robotique, à la durée de vie ou aux systèmes naturels.
+
+
+## Statut après ré-audit E71 — 26 novembre 2026
+- Les choix utilisateur explicites à conserver sont : agents « both » (sans réinterpréter la sémantique exacte de l'option initiale), mémoire de projet locale, auto-évolution maximale sous isolation/versioning/tests/approbation, et extensions « both » (locales et distantes).
+- ADR-002/PostgreSQL reste une recommandation à ratifier par prototype Windows install/upgrade/backup/restore. Il n'existe pas encore d'adaptateur PostgreSQL dans le dépôt.
+- ADR-004 doit rester spécifique à un domaine/solveur/version/cas d'usage; aucune qualification générale n'est admise.
+- E23–E27 ne sont pas ratifiés : E26 rejette le gel des contrats; E27 reste proposé et les gates sont ouverts.
+- Le registre décisionnel V3.1 et le registre de dispositions E71 dans la Library sont les index de travail actifs; ce fichier ADR conserve son statut proposé.
