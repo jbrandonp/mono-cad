@@ -100,6 +100,19 @@ Les douze fichiers ciblés ont été retrouvés sur GitHub : build123d-ecip-cad-
 
 La présence sur GitHub est vérifiée. L'installation locale, l'activation Antigravity, la copie dans le workspace, les priorités effectives et les outils référencés ne peuvent pas être vérifiés depuis le dépôt distant. Le rapport local historique transmis dans la conversation affirme une installation, mais n'est pas une preuve actuelle.
 
+### Couverture manquante pour l'ambition élargie
+La recherche de chemins SKILL.md par domaine n'a pas trouvé de skill dédié identifiable pour :
+- électromagnétisme;
+- dynamique multicorps;
+- fatigue, fracture, fluage, corrosion et prédiction de durée de vie;
+- optimisation de forme/topologie;
+- PLM et configuration EBOM/MBOM/change/release;
+- CFD/OpenFOAM;
+- science des matériaux et matériaux computationnels;
+- modélisation naturelle (climat, hydrologie, géosciences, écologie).
+
+Des skills génériques de data engineering, optimisation et robotique existent, mais ils ne remplacent pas des compétences disciplinaires validées. Le chiffre historique de 170 compétences ne prouve donc pas la couverture des nouveaux domaines demandés.
+
 Les skills contiennent parfois des affirmations marketing ou excessives. Ils doivent être utilisés comme guides, puis confrontés à la documentation upstream, aux licences, aux tests et aux benchmarks.
 
 ## 4. Décision de reconstruction
