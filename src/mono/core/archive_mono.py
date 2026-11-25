@@ -495,6 +495,10 @@ class MonoArchive:
                     elif p_name == "fea_gmsh":
                         provider = FeaGmshProvider(entity_id=eid)
 
+                    if provider is None:
+                        raise MonoArchiveError(
+                            f"Provider non pris en charge pour une restauration : {p_name!r} (entité {eid!r})."
+                        )
                     if provider is not None:
                         doc.entities[eid] = EntityRecord(
                             entity_id=eid,
