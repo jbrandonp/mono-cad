@@ -4,12 +4,8 @@
 ### **Environnement d'Ingénierie Multidisciplinaire Unifié Piloté par Intelligence Artificielle**
 #### *De la Macromolécule Atomique ($10^{-9}\text{ m}$) à l'Architecture Bâtiment ($10^{2}\text{ m}$)*
 
-[![Tests](https://img.shields.io/badge/tests-106%20passed-brightgreen?style=for-the-badge&logo=pytest)](file:///tests)
-[![Coverage](https://img.shields.io/badge/coverage-83%25-green?style=for-the-badge)](file:///src/mono)
 [![Python](https://img.shields.io/badge/python-3.12-blue?style=for-the-badge&logo=python)](pyproject.toml)
 [![TypeScript](https://img.shields.io/badge/typescript-5.9-3178C6?style=for-the-badge&logo=typescript)](frontend/src/main.ts)
-[![Architecture](https://img.shields.io/badge/architecture-100%25%20Native%20%7C%20Zero--Docker-F58025?style=for-the-badge)](file:///bin)
-[![Typing](https://img.shields.io/badge/typing-Zero--Any%20Strict-8A2BE2?style=for-the-badge)](src/mono)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-lightgrey?style=for-the-badge)](LICENSE)
 
 <br/>
@@ -22,6 +18,11 @@
 ```
 
 </div>
+
+> [!CAUTION]
+> **État réel du dépôt — 25 novembre 2026.** Ce README décrit une vision ambitieuse et des prototypes, pas une plateforme industrielle validée. Les affirmations historiques de tests, couverture, sécurité, performances, conformité physique ou maturité ne doivent pas être considérées comme vérifiées tant qu'elles ne sont pas corroborées par une exécution reproductible et des preuves publiées. Un audit de refondation est en cours sur une branche distincte.
+>
+> Nouvelle base d'architecture : [Charte de refondation](REFOUNDATION_CHARTER.md) · [Audit factuel](REFOUNDATION_AUDIT.md) · [Architecture cible](TARGET_PLATFORM_ARCHITECTURE.md) · [Plan d'implémentation](REFOUNDATION_IMPLEMENTATION_PLAN.md)
 
 ---
 
