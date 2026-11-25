@@ -14,6 +14,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from mono.domain.units import convert_value, get_unit_definition, validate_unit_dimension
+
 
 SCHEMA_VERSION = "2.0"
 
@@ -91,6 +93,25 @@ class Quantity(ContractModel):
         if value != value or value in (float("inf"), float("-inf")):
             raise ValueError("Quantity value must be finite")
         return value
+
+    @model_validator(mode="after")
+    def unit_matches_dimension(self) -> "Quantity":
+        validate_unit_dimension(self.unit, self.dimension)
+        return self
+
+    def to(self, target_unit: str) -> "Quantity":
+        source = get_unit_definition(self.unit)
+        target = get_unit_definition(target_unit)
+        converted_uncertainty = (
+            None if self.uncertainty is None
+            else self.uncertainty * source.scale_to_base / target.scale_to_base
+        )
+        return type(self).model_validate({
+            **self.model_dump(),
+            "value": convert_value(self.value, self.unit, target_unit),
+            "unit": target_unit,
+            "uncertainty": converted_uncertainty,
+        })
 
 
 class ArtifactRef(ContractModel):
