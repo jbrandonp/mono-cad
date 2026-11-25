@@ -22,8 +22,11 @@ import hashlib
 import io
 import json
 import os
+import re
 import tarfile
 import tempfile
+import uuid
+from pathlib import PurePosixPath
 from typing import Mapping
 
 import build123d as bd
@@ -49,6 +52,11 @@ class MonoArchive:
 
     FORMAT_NAME: str = "mono-archive"
     SCHEMA_VERSION: str = "1.0.0"
+    MAX_COMPRESSED_BYTES: int = 512 * 1024 * 1024
+    MAX_ARCHIVE_BYTES: int = 2 * 1024 * 1024 * 1024
+    MAX_MEMBER_BYTES: int = 512 * 1024 * 1024
+    MAX_MANIFEST_BYTES: int = 8 * 1024 * 1024
+    MAX_MEMBERS: int = 10_000
 
     @staticmethod
     def _compute_sha256(data: bytes) -> str:
@@ -80,6 +88,8 @@ class MonoArchive:
 
             with tempfile.TemporaryDirectory() as tmp_dir:
                 for eid, rec in doc.entities.items():
+                    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", eid) or eid in {".", ".."}:
+                        raise MonoArchiveError(f"Identifiant d'entité non sûr pour l'archive : {eid!r}")
                     provider = rec.provider
                     p_name = rec.provider_name
                     file_rel_path: str = ""
@@ -225,24 +235,69 @@ class MonoArchive:
         return compressed_mono
 
     @classmethod
+    def _validate_member_name(cls, name: str) -> str:
+        """Reject absolute paths, traversal, Windows separators and non-normalized names."""
+        if not name or "\x00" in name or "\\" in name or ":" in name:
+            raise MonoArchiveError(f"Nom de membre d'archive invalide : {name!r}")
+        path = PurePosixPath(name)
+        if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+            raise MonoArchiveError(f"Chemin interdit dans l'archive : {name!r}")
+        if path.as_posix() != name:
+            raise MonoArchiveError(f"Chemin d'archive non normalisé : {name!r}")
+        return name
+
+    @classmethod
+    def _validate_tar_members(cls, tar: tarfile.TarFile) -> None:
+        """Validate all headers and resource limits before reading any payload."""
+        members = tar.getmembers()
+        if len(members) > cls.MAX_MEMBERS:
+            raise MonoArchiveError("Archive .mono : nombre maximal de membres dépassé")
+        seen: set[str] = set()
+        total_size = 0
+        manifest_count = 0
+        for member in members:
+            cls._validate_member_name(member.name)
+            if member.name in seen:
+                raise MonoArchiveError(f"Membre dupliqué dans l'archive : {member.name!r}")
+            seen.add(member.name)
+            if not member.isfile():
+                raise MonoArchiveError(f"Type de membre interdit dans l'archive : {member.name!r}")
+            if member.size < 0 or member.size > cls.MAX_MEMBER_BYTES:
+                raise MonoArchiveError(f"Taille de membre interdite : {member.name!r}")
+            if member.name == "manifest.json":
+                manifest_count += 1
+                if member.size > cls.MAX_MANIFEST_BYTES:
+                    raise MonoArchiveError("Manifeste .mono trop volumineux")
+            total_size += member.size
+            if total_size > cls.MAX_ARCHIVE_BYTES:
+                raise MonoArchiveError("Taille totale décompressée de l'archive dépassée")
+        if manifest_count != 1:
+            raise MonoArchiveError("L'archive doit contenir exactement un manifest.json")
+
+    @classmethod
     def _decompress_to_tar(cls, data: bytes) -> tarfile.TarFile:
-        """Décompresse un flux .mono avec détection automatique (zstd, gzip ou tar brut)."""
+        """Decompress a bounded .mono stream and reject unsafe tar members."""
+        if len(data) > cls.MAX_COMPRESSED_BYTES:
+            raise MonoArchiveError("Archive .mono compressée trop volumineuse")
         zstd_magic = b"\x28\xb5\x2f\xfd"
-        # 1. Tentative Zstandard
-        if data.startswith(zstd_magic) or len(data) >= 4:
+        if data.startswith(zstd_magic):
             try:
                 dctx = zstd.ZstdDecompressor()
-                tar_bytes = dctx.decompress(data)
-                return tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r")
-            except Exception as zerr:
-                if data.startswith(zstd_magic):
-                    raise MonoArchiveError(f"Conteneur Zstandard corrompu ou falsifié : {zerr}") from zerr
-
-        # 2. Tentative tarfile standard (gzip / tar brut)
+                tar_bytes = dctx.decompress(data, max_output_size=cls.MAX_ARCHIVE_BYTES)
+                tar = tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:")
+            except Exception as err:
+                raise MonoArchiveError(f"Conteneur Zstandard corrompu ou falsifié : {err}") from err
+        else:
+            try:
+                tar = tarfile.open(fileobj=io.BytesIO(data), mode="r:*")
+            except Exception as err:
+                raise MonoArchiveError(f"Format de conteneur invalide ou archive corrompue : {err}") from err
         try:
-            return tarfile.open(fileobj=io.BytesIO(data), mode="r:*")
-        except Exception as err:
-            raise MonoArchiveError(f"Format de conteneur invalide ou archive corrompue : {err}") from err
+            cls._validate_tar_members(tar)
+            return tar
+        except Exception:
+            tar.close()
+            raise
 
     @classmethod
     def inspect(cls, file_or_bytes: str | bytes) -> dict[str, object]:
@@ -311,8 +366,10 @@ class MonoArchive:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 for ent_meta in entities_list:
                     eid = ent_meta["entity_id"]
+                    if not isinstance(eid, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", eid) or eid in {".", ".."}:
+                        raise MonoArchiveError("Identifiant d'entité invalide dans le manifeste")
                     p_name = ent_meta["provider_name"]
-                    rel_path = ent_meta["file_path"]
+                    rel_path = cls._validate_member_name(ent_meta["file_path"])
                     expected_sha = ent_meta.get("sha256")
 
                     art_file = tar.extractfile(rel_path)
@@ -328,7 +385,7 @@ class MonoArchive:
                     provider: object = None
 
                     if p_name == "brep_build123d":
-                        step_tmp = os.path.join(tmp_dir, f"{eid}_restore.step")
+                        step_tmp = os.path.join(tmp_dir, f"{uuid.uuid4().hex}_restore.step")
                         with open(step_tmp, "wb") as f_step:
                             f_step.write(art_bytes)
                         imported_part = bd.import_step(step_tmp)
