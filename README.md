@@ -1,17 +1,15 @@
 <div align="center">
 
-# 💎 Mono CAD Studio v3.0 Enterprise
-### **Environnement d'Ingénierie Multidisciplinaire Unifié Piloté par Intelligence Artificielle**
-#### *De la Macromolécule Atomique ($10^{-9}\text{ m}$) à l'Architecture Bâtiment ($10^{2}\text{ m}$)*
+# Mono — Plateforme d'ingénierie multidisciplinaire
+### Prototype logiciel et architecture cible en reconstruction
 
-[![Tests](https://img.shields.io/badge/tests-106%20passed-brightgreen?style=for-the-badge&logo=pytest)](file:///tests)
-[![Coverage](https://img.shields.io/badge/coverage-83%25-green?style=for-the-badge)](file:///src/mono)
 [![Python](https://img.shields.io/badge/python-3.12-blue?style=for-the-badge&logo=python)](pyproject.toml)
-[![TypeScript](https://img.shields.io/badge/typescript-5.9-3178C6?style=for-the-badge&logo=typescript)](frontend/src/main.ts)
-[![Architecture](https://img.shields.io/badge/architecture-100%25%20Native%20%7C%20Zero--Docker-F58025?style=for-the-badge)](file:///bin)
-[![Typing](https://img.shields.io/badge/typing-Zero--Any%20Strict-8A2BE2?style=for-the-badge)](src/mono)
-[![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-lightgrey?style=for-the-badge)](LICENSE)
+[![Frontend](https://img.shields.io/badge/frontend-TypeScript%20%2F%20Three.js-3178C6?style=for-the-badge)](frontend/package.json)
+[![Desktop](https://img.shields.io/badge/desktop-Tauri%202-orange?style=for-the-badge)](src-tauri/Cargo.toml)
 
+**État : prototype multidisciplinaire — reconstruction des fondations en cours.**
+
+</div>
 <br/>
 
 ```
@@ -22,6 +20,13 @@
 ```
 
 </div>
+
+---
+
+> **Note de statut (25 novembre 2026)**  
+> Ce dépôt contient des prototypes de CAO, FEA, CFD, BIM, textile, bio/molécules, CAM et dessin technique. Les descriptions détaillées ci-dessous mêlent capacités présentes et objectifs de conception historiques. Elles ne constituent pas une preuve de validation industrielle, de certification, de couverture complète, de convergence scientifique, de performance mesurée ou de compatibilité multi-OS. Consulter la [matrice de capacités](docs/architecture/CAPABILITY_MATRIX.md), l'[audit des fondations](docs/audit/FOUNDATION_AUDIT.md), l'[architecture V2](docs/architecture/FOUNDATION_V2.md) et la [feuille de reconstruction](docs/architecture/RECONSTRUCTION_ROADMAP.md) pour l'état vérifiable.
+>
+> **Sécurité :** le filtrage AST d'ECIP n'est pas un bac à sable; l'exécution actuelle utilise Python exec dans le processus backend. Ne pas exécuter de scripts non fiables. Les résultats de simulation ne doivent pas être utilisés comme preuves de conception qualifiée sans vérification et validation adaptées.
 
 ---
 
