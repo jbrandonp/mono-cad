@@ -241,3 +241,38 @@ def test_fea_rest_api_and_websocket() -> None:
         assert fea_done["type"] == "fea_completed"
         assert fea_done["entity_id"] == "beam_fea"
         assert fea_done["is_structurally_safe"] is True
+
+
+def test_fea_boundary_selection_rejects_empty_surface_set() -> None:
+    """Une géométrie sans surfaces ne doit jamais recevoir d'appuis/charges inventés."""
+    provider = FeaGmshProvider(entity_id="no_surfaces")
+    try:
+        provider._select_boundary_surfaces([])
+    except ValueError as exc:
+        assert "aucune surface" in str(exc).lower()
+    else:
+        raise AssertionError("Une sélection de conditions aux limites vide aurait dû bloquer la FEA.")
+
+
+def test_fea_boundary_selection_rejects_unmatched_predicate(monkeypatch) -> None:
+    """Un prédicat d'appui non reconnu doit bloquer le calcul au lieu de choisir la première face."""
+    from mono.providers import fea_gmsh
+
+    monkeypatch.setattr(
+        fea_gmsh.gmsh.model,
+        "getBoundingBox",
+        lambda dim, tag: (0.0, 0.0, float(tag), 1.0, 1.0, float(tag) + 1.0),
+    )
+    provider = FeaGmshProvider(
+        entity_id="unmatched_boundary",
+        boundary=FEABoundaryCondition(
+            fixed_predicate="unknown_selector",
+            load_predicate="max_z",
+        ),
+    )
+    try:
+        provider._select_boundary_surfaces([(2, 1), (2, 2)])
+    except ValueError as exc:
+        assert "aucun appui" in str(exc).lower()
+    else:
+        raise AssertionError("Un prédicat d'appui non reconnu aurait dû bloquer la FEA.")
