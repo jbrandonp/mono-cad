@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "build123d>=0.13.0",
+    "ezdxf>=1.4.5",
     "fastapi>=0.162.0",
     "fpdf2>=2.8.9",
     "gemmi>=0.7.5",
@@ -22,7 +23,7 @@ dependencies = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "python-solvespace>=3.0.8",
+    "scipy>=1.18.1",
     "taichi>=1.7.4",
     "uvicorn[standard]>=0.54.0",
     "websockets>=17.3",
