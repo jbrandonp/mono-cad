@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import build123d as bd
 import pytest
+from unittest.mock import patch
 
 from mono.providers.additive_slicer import AdditiveSlicerProvider, DfAMReport, GCodeAnalysis
 
@@ -49,7 +50,8 @@ def test_analytical_slicing_and_gcode_analysis(tmp_path) -> None:
         infill_percent=20,
         nozzle_temp_c=210,
         bed_temp_c=60,
-        use_orcaslicer=False,  # Test du tranchage analytique déterministe
+        use_orcaslicer=False,
+        allow_demo_fallback=True,  # Démo bbox explicitement non fabricable
     )
 
     assert isinstance(analysis, GCodeAnalysis)
@@ -62,6 +64,8 @@ def test_analytical_slicing_and_gcode_analysis(tmp_path) -> None:
     assert analysis.filament_length_mm > 0.0
     assert analysis.estimated_mass_grams > 0.0
     assert analysis.estimated_time_seconds > 0.0
+    assert analysis.generation_method == "demo_bbox_only"
+    assert analysis.fabrication_ready is False
 
 
 def test_geometry_provider_contract_and_scalar_field() -> None:
@@ -110,19 +114,11 @@ async def test_slicer_api_endpoints() -> None:
         assert data_audit["is_manufacturable"] is True
         assert data_audit["fits_build_plate"] is True
 
-        # Tranchage
-        res_slice = await client.post("/api/slicer/slice", json={
-            "entity_id": "box_for_slicing",
-            "layer_height_mm": 0.20,
-        })
-        assert res_slice.status_code == 200
-        data_slice = res_slice.json()
-        assert data_slice["is_valid"] is True
-        assert data_slice["layer_count"] > 0
-        slicer_entity_id = data_slice["slicer_entity_id"]
-
-        # Téléchargement G-code fabrication additive
-        res_gcode = await client.get(f"/api/slicer/gcode?entity_id={slicer_entity_id}")
-        assert res_gcode.status_code == 200
-        assert "G28" in res_gcode.text
-        assert "M104" in res_gcode.text or "M109" in res_gcode.text
+        # Sans OrcaSlicer, l'API refuse de produire un faux G-code de fabrication.
+        with patch("mono.providers.additive_slicer.is_orcaslicer_available", return_value=False):
+            res_slice = await client.post("/api/slicer/slice", json={
+                "entity_id": "box_for_slicing",
+                "layer_height_mm": 0.20,
+            })
+        assert res_slice.status_code == 503
+        assert "OrcaSlicer" in res_slice.json()["detail"]
