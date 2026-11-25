@@ -87,12 +87,14 @@ def test_mono_archive_sha256_corruption_detection() -> None:
         fake_manifest = {
             "format": "mono-archive",
             "schema_version": "1.0.0",
+            "entities_count": 1,
             "entities": [
                 {
                     "entity_id": "cube",
                     "provider_name": "brep_build123d",
                     "file_path": "brep/cube.step",
                     "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "size_bytes": len(cube_step),
                 }
             ],
         }
