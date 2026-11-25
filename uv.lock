@@ -627,7 +627,7 @@ dependencies = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
-    { name = "python-solvespace" },
+    { name = "scipy" },
     { name = "taichi" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
@@ -637,6 +637,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "build123d", specifier = ">=0.13.0" },
+    { name = "ezdxf", specifier = ">=1.4.5" },
     { name = "fastapi", specifier = ">=0.162.0" },
     { name = "fpdf2", specifier = ">=2.8.9" },
     { name = "gemmi", specifier = ">=0.7.5" },
@@ -650,7 +651,7 @@ requires-dist = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
-    { name = "python-solvespace", specifier = ">=3.0.8" },
+    { name = "scipy", specifier = ">=1.18.1" },
     { name = "taichi", specifier = ">=1.7.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
     { name = "websockets", specifier = ">=17.3" },
@@ -1040,11 +1041,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/60/d1/38f3a3405989a89ac18390803e70c6ad7c7760da4f9b83cbeca0c44a0c72/python_dotenv-1.2.4-py3-none-any.whl", hash = "sha256:42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc", size = 23266, upload-time = "2026-10-01T05:36:08.633Z" },
 ]
 
-[[package]]
-name = "python-solvespace"
-version = "3.0.8"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/70/d9/edb532941527cfdbd22861ce574a57859952d21132f791a8706fafee9876/python_solvespace-3.0.8.tar.gz", hash = "sha256:c5c132c1151cfa4cc8719474bbbafedd109d7203317e531f9160a37aaae644b0", size = 1231985, upload-time = "2022-11-11T13:18:23.9Z" }
 
 [[package]]
 name = "pyyaml"
