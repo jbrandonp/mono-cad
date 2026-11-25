@@ -1,57 +1,77 @@
-# Mono V2 — Rebaselining de la plateforme d'ingénierie multidisciplinaire
-Version documentaire : 1.0
-Date : 25 novembre 2026
-Statut : proposition de rebaselining — non ratifiée
+# MONO — Rebaselining architectural global
+Version 2.0 — 25 novembre 2026
+Statut : proposition d'architecture de référence, non ratifiée
 
-## Vision produit
-Mono doit être conçu comme une plateforme intégrée d'ingénierie numérique, pas comme un simple visualiseur CAO auquel on ajoute une collection d'outils. Le produit cible couvre le fil numérique de la conception, de l'analyse, de l'optimisation, de la fabrication, de la gestion du produit et de la recherche scientifique.
+## Vision
+Mono devient une plateforme intégrée d'ingénierie et de sciences computationnelles. Sa valeur repose sur un modèle de données et un fil numérique communs, et non sur une accumulation d'outils dans une interface unique.
 
-## Architecture par domaines
-1. Geometry & CAD — esquisses contraintes, B-Rep, maillage, assemblages, dessins 2D, PMI/GD&T, conversions et unités.
-2. Simulation & CAE — FEA linéaire/non linéaire, thermique, fatigue, modal, buckling, CFD, électromagnétisme, multibody, acoustique et multiphysique.
-3. Materials & Durability — bibliothèque de matériaux versionnée, lois constitutives, fatigue, fracture, fluage, corrosion, vieillissement, environnement et incertitudes.
-4. Optimization — optimisation de paramètres, forme, topologie, multiobjectif, robustesse et exploration de conception.
-5. Manufacturing & Robotics — DFM/DFA, process planning, CAM, fabrication additive, simulation d'enlèvement de matière, jumeaux machines, robotique, programmation hors ligne et inspection.
-6. PLM & Digital Thread — exigences, variantes, EBOM/MBOM, configurations, révisions, ECO/ECN, approbations, fournisseurs, qualité et traçabilité.
-7. Molecular & Materials Science — préparation de molécules, docking, scoring, dynamique moléculaire, chimie quantique, structure et prédiction de propriétés matériaux.
-8. Intelligence & Foresight — ingestion de sources, recherche, provenance, veille scientifique/industrielle, extraction, synthèse et alertes.
-9. Big Data Platform — ingestion, stockage, calcul distribué, catalogage, qualité, lineage, gouvernance et visual analytics.
-10. Natural Systems — géosciences, hydrologie, atmosphère/climat, écosystèmes et systèmes physiques naturels par sous-domaines validés.
-11. Platform Core — documents, scènes, unités, événements, jobs, plugins, API, IAM, sécurité, observabilité, UI, packaging et gouvernance.
+## Décision structurante
+Adopter un **monolithe modulaire à frontières de domaines**, avec :
+- un modèle de domaine indépendant des bibliothèques ;
+- un catalogue d'artefacts et un graphe de provenance ;
+- des adaptateurs de géométrie, de simulation, de fabrication et de science ;
+- un gestionnaire durable de jobs ;
+- des workers de solveurs isolés ;
+- un système VVUQ par domaine ;
+- un frontend de workspaces et de visualiseurs spécialisés ;
+- un PLM transversal comme gestion des configurations, révisions et changements.
 
-## Contrat commun d'un solveur
-Chaque solveur doit déclarer :
-- solver_id, version, éditeur/projet, licence et provenance ;
-- domaines physiques et formulations supportés ;
-- dimensions, éléments, modèles constitutifs et limites ;
-- formats d'entrée/sortie et unités ;
-- préconditions, hypothèses et plage de validité ;
-- paramètres, tolérances et critères de convergence ;
-- ressources, parallélisme et contraintes hardware ;
-- exécutable et mode d'isolation ;
-- logs, diagnostics et provenance du calcul ;
-- tests de référence, benchmark et validation indépendante ;
-- classification du résultat : préparé, estimé, exécuté, convergé, vérifié ou qualifié.
+L'architecture distribuée et le calcul HPC seront des extensions, pas des prérequis.
 
-Aucune interface ne doit afficher « convergé » sans preuve du solveur et critères explicitement satisfaits.
+## Couches
+1. **Experience** — UI desktop/web, visualiseurs, tableaux de bord, inspecteurs.
+2. **Application** — commandes, workflows, études, permissions, orchestration et jobs.
+3. **Domain** — CAD, systems engineering, materials, CAE, optimization, manufacturing, robotics, PLM, molecular science, intelligence, data et natural systems.
+4. **Infrastructure** — persistance, stockage artefacts, événements, workers, secrets, observabilité, identité, packaging.
+5. **Adapters** — OpenCASCADE/build123d, Gmsh, CalculiX, OpenFOAM, OpenMM, IfcOpenShell, OrcaSlicer, moteurs futurs.
 
-## Contrat commun d'un workflow scientifique
-Un workflow scientifique doit être reproductible, versionné, traçable, explicite sur les données d'entrée, les unités, les hypothèses, les modèles, les paramètres, les versions d'outils, les graines aléatoires, les ressources, les résultats et les limites.
+## Domaines métier
+- CAD & Geometry : esquisses, B-Rep, maillage, assemblages, PMI/GD&T, dessins.
+- Systems Engineering : exigences, architecture, interfaces, allocations, trade studies.
+- CAE & Physics : structure, thermique, CFD, électromagnétisme, acoustique, multibody, multiphysique.
+- Materials & Durability : matériaux, modèles constitutifs, fatigue, fracture, fluage, corrosion, durée de vie.
+- Optimization : paramètres, forme, topologie, multiobjectif, robustesse.
+- Manufacturing : DFM/DFA, process planning, CAM, additive, simulation machine, métrologie.
+- Robotics : cinématique, cellules, trajectoires, collisions, programmation hors ligne.
+- PLM : configurations, EBOM/MBOM, révisions, changements, approbations, releases.
+- Molecular & Materials Science : molécules, docking, dynamique moléculaire, chimie computationnelle, microstructures.
+- Intelligence & Research : veille, sources, provenance, extraction, alertes.
+- Data Platform : ingestion, catalogue, qualité, lineage, stockage et traitement massif.
+- Natural Systems : climat, hydrologie, géosciences, écologie, systèmes physiques naturels.
 
-## PLM comme fil numérique
-Les objets d'ingénierie doivent être liés : exigence → fonction → architecture système → pièce/assemblage → matériau → analyse → décision d'optimisation → procédé de fabrication → contrôle qualité → révision et dossier produit.
+## Fondations transverses
+- Modèle canonique décrit dans `DOMAIN_MODEL_V2.md`.
+- Contrat de calcul décrit dans `SOLVER_CREDIBILITY_V2.md`.
+- Audit de la base actuelle décrit dans `FOUNDATION_AUDIT_V2.md`.
+- Migration décrite dans `FOUNDATION_MIGRATION_ROADMAP_V2.md`.
 
-## Architecture des données
-- Données géométriques exactes, maillages, champs de simulation, séries temporelles, structures moléculaires et données de veille gardent des stockages adaptés.
-- Le document Mono référence les artefacts, versions, unités, provenance et relations, sans forcer tous les contenus binaires dans une base unique.
-- Les données analytiques massives ne doivent pas ralentir l'édition interactive.
-- Chaque résultat garde son contexte scientifique et sa provenance.
+## Modèle d'exécution
+Un utilisateur définit une étude versionnée. Le système valide les entrées et unités, prépare les artefacts, place un job dans une file, sélectionne un worker et un solveur compatible, exécute dans une sandbox, collecte les sorties, parse les résultats typés, évalue la convergence, produit les preuves VVUQ, puis publie un résultat immuable.
 
-## Révision des dossiers précédents
-E-60 à E-69 restent des fondations transverses (événements, plugins, exécution, mémoire, agents, outils, UI, IAM, API, distribution). Ils ne couvrent pas à eux seuls les moteurs métier avancés listés dans la demande. Ils doivent être reliés à une nouvelle série de dossiers d'ingénierie de domaine et révisés là où les contrats de solveurs, données scientifiques, PLM, robotique et optimisation l'exigent.
+## Architecture de données
+Les métadonnées, identités, révisions, relations, états et permissions sont stockés transactionnellement. Les gros artefacts binaires et résultats de champs résident dans un stockage adapté. Un catalogue indexe les artefacts, unités, provenance et relations. Le format d'archive .mono devient un paquet portable de références, manifeste, artefacts et preuves, avec validation stricte.
 
-## Ordre de réalisation
-P0 vérité des résultats et qualité logicielle ; P1 mécanique avancée et solveurs ; P2 fabrication et robotique ; P3 PLM ; P4 science moléculaire/matériaux, veille, Big Data et systèmes naturels.
+## Système d'unités
+SI cohérent en interne, dimensions typées, unités explicites, conversions centralisées, référentiels de coordonnées explicites et conventions de signe/documentation.
 
-## Statut et garde-fous
-Cette spécification ne crée pas ces capacités. Chaque domaine doit être développé, testé, comparé à des cas de référence et évalué par des spécialistes. Les résultats ne sont pas certifiés par leur seule génération logicielle. Les sorties CAM/robotique ne doivent jamais piloter une machine réelle sans simulation, vérification, revue humaine et validation sur installation appropriée.
+## VVUQ et confiance
+Aucun calcul ne peut être qualifié par la seule présence d'un solveur ou par un code retour nul. Vérification du code, vérification de solution, validation empirique, quantification des incertitudes et domaine d'applicabilité sont séparés.
+
+## Gouvernance des moteurs
+Les fournisseurs existants restent utiles mais deviennent adaptateurs. Un moteur externe est installé, versionné, vérifié, licencié, exécuté et journalisé selon un contrat commun. Aucun fallback silencieux.
+
+## Sécurité
+Le code utilisateur et les plugins s'exécutent dans des workers isolés au niveau OS. Le backend local utilise authentification, contrôle d'origine, quotas, schémas stricts et permissions minimales. Les archives sont validées avant toute reconstruction. Tauri utilise CSP restrictive et identité vérifiée du backend.
+
+## Compatibilité
+- V1 reste importable en mode lecture/migration.
+- Les projets migrés conservent IDs externes, artefacts et provenance disponible.
+- Toute donnée perdue ou non reconstructible est signalée.
+- Pas de migration destructive automatique.
+- Les changements de schéma sont versionnés et réversibles autant que possible.
+
+## Références de crédibilité scientifique
+NASA-STD-7009B, NASA-HDBK-7009B, ASME VVUQ 1-2022, ASME V&V 10-2019 (R2025), ASME V&V 20. Ces références guident la gouvernance VVUQ; elles ne constituent pas une certification de Mono.
+
+## Limites et statut
+Cette architecture est une cible proposée. Elle ne signifie pas que les domaines avancés sont déjà implémentés, validés ou certifiés. Les validations doivent être réalisées par discipline, cas d'usage et niveau de risque.
