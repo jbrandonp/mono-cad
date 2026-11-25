@@ -471,21 +471,51 @@ class FeaGmshProvider(GeometryProvider):
     def _select_boundary_surfaces(
         self, surfaces: list[tuple[int, int]]
     ) -> tuple[list[int], list[int]]:
-        """Sélectionne déterministement les identifiants de surfaces d'encastrement et de charge."""
-        if self._boundary.fixed_face_indices and self._boundary.load_face_indices:
-            return list(self._boundary.fixed_face_indices), list(self._boundary.load_face_indices)
+        """Résout les surfaces d'appui et de charge sans jamais inventer de sélection.
 
-        # Calcul des coordonnées extrêmes sur l'ensemble des faces
-        bboxes = {s[1]: gmsh.model.getBoundingBox(2, s[1]) for s in surfaces}
+        Les identifiants explicites sont interprétés comme des tags de surfaces Gmsh.
+        À défaut, les prédicats géométriques configurés sont évalués. Toute sélection
+        vide, inconnue, hors du modèle ou ambiguë bloque la préparation du calcul.
+        """
+        surface_tags = {tag for dim, tag in surfaces if dim == 2}
+        if not surface_tags:
+            raise ValueError("FEA bloquée : aucune surface 2D disponible pour définir les conditions aux limites.")
 
-        fixed_faces = self._match_faces_by_predicate(bboxes, self._boundary.fixed_predicate)
-        load_faces = self._match_faces_by_predicate(bboxes, self._boundary.load_predicate)
+        if self._boundary.fixed_face_indices:
+            fixed_faces = list(dict.fromkeys(self._boundary.fixed_face_indices))
+        else:
+            bboxes = {tag: gmsh.model.getBoundingBox(2, tag) for tag in surface_tags}
+            fixed_faces = self._match_faces_by_predicate(bboxes, self._boundary.fixed_predicate)
 
-        # S'assurer qu'au moins une face est sélectionnée
-        if not fixed_faces and surfaces:
-            fixed_faces = [surfaces[0][1]]
-        if not load_faces and len(surfaces) > 1:
-            load_faces = [surfaces[-1][1]]
+        if self._boundary.load_face_indices:
+            load_faces = list(dict.fromkeys(self._boundary.load_face_indices))
+        else:
+            bboxes = {tag: gmsh.model.getBoundingBox(2, tag) for tag in surface_tags}
+            load_faces = self._match_faces_by_predicate(bboxes, self._boundary.load_predicate)
+
+        invalid_fixed = sorted(set(fixed_faces) - surface_tags)
+        invalid_load = sorted(set(load_faces) - surface_tags)
+        if invalid_fixed or invalid_load:
+            raise ValueError(
+                "FEA bloquée : tags de surfaces inexistants "
+                f"(appuis={invalid_fixed}, charges={invalid_load})."
+            )
+        if not fixed_faces:
+            raise ValueError(
+                f"FEA bloquée : aucun appui ne correspond au prédicat '{self._boundary.fixed_predicate}'. "
+                "Aucune surface de remplacement ne sera choisie automatiquement."
+            )
+        if not load_faces:
+            raise ValueError(
+                f"FEA bloquée : aucune surface de charge ne correspond au prédicat '{self._boundary.load_predicate}'. "
+                "Aucune surface de remplacement ne sera choisie automatiquement."
+            )
+        overlap = sorted(set(fixed_faces) & set(load_faces))
+        if overlap:
+            raise ValueError(
+                f"FEA bloquée : les surfaces d'appui et de charge se chevauchent ({overlap}). "
+                "Définissez des conditions aux limites non ambiguës."
+            )
 
         return fixed_faces, load_faces
 
