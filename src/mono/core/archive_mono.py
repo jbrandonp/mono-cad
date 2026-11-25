@@ -18,6 +18,7 @@ Spécifications du format .mono :
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import gzip
 import hashlib
 import io
 import json
@@ -235,6 +236,21 @@ class MonoArchive:
         return compressed_mono
 
     @classmethod
+    def _read_archive_bytes(cls, file_or_bytes: str | bytes) -> bytes:
+        """Read an archive only after enforcing the compressed-size limit."""
+        if isinstance(file_or_bytes, bytes):
+            data = file_or_bytes
+        else:
+            path = Path(file_or_bytes)
+            size = path.stat().st_size
+            if size > cls.MAX_COMPRESSED_BYTES:
+                raise MonoArchiveError("Archive .mono compressée trop volumineuse")
+            data = path.read_bytes()
+        if len(data) > cls.MAX_COMPRESSED_BYTES:
+            raise MonoArchiveError("Archive .mono compressée trop volumineuse")
+        return data
+
+    @classmethod
     def _validate_member_name(cls, name: str) -> str:
         """Reject absolute paths, traversal, Windows separators and non-normalized names."""
         if not name or "\x00" in name or "\\" in name or ":" in name:
@@ -287,9 +303,20 @@ class MonoArchive:
                 tar = tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:")
             except Exception as err:
                 raise MonoArchiveError(f"Conteneur Zstandard corrompu ou falsifié : {err}") from err
+        elif data.startswith(b"\\x1f\\x8b"):
+            try:
+                with gzip.GzipFile(fileobj=io.BytesIO(data), mode="rb") as stream:
+                    tar_bytes = stream.read(cls.MAX_ARCHIVE_BYTES + 1)
+                if len(tar_bytes) > cls.MAX_ARCHIVE_BYTES:
+                    raise MonoArchiveError("Archive gzip .mono décompressée trop volumineuse")
+                tar = tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:")
+            except MonoArchiveError:
+                raise
+            except Exception as err:
+                raise MonoArchiveError(f"Archive gzip .mono corrompue : {err}") from err
         else:
             try:
-                tar = tarfile.open(fileobj=io.BytesIO(data), mode="r:*")
+                tar = tarfile.open(fileobj=io.BytesIO(data), mode="r:")
             except Exception as err:
                 raise MonoArchiveError(f"Format de conteneur invalide ou archive corrompue : {err}") from err
         try:
@@ -359,7 +386,7 @@ class MonoArchive:
         Returns:
             dict[str, object]: Le manifeste complet du projet.
         """
-        raw_data = file_or_bytes if isinstance(file_or_bytes, bytes) else open(file_or_bytes, "rb").read()
+        raw_data = cls._read_archive_bytes(file_or_bytes)
         tar = cls._decompress_to_tar(raw_data)
 
         try:
