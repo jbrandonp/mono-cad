@@ -6,8 +6,7 @@ solver, database driver, object store, UI framework, or LLM vendor.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
