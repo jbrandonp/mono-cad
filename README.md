@@ -47,6 +47,21 @@
 
 ---
 
+## Gouvernance de la refonte architecturale
+
+La branche de rebaselining contient une analyse des fondations, le modèle de domaine cible et les contrats de crédibilité des solveurs :
+
+- [Index de pilotage](ENGINEERING_IMPLEMENTATION_ROADMAP.md)
+- [Audit des fondations](FOUNDATION_AUDIT_V2.md)
+- [Modèle de domaine V2](DOMAIN_MODEL_V2.md)
+- [Contrat des solveurs et VVUQ](SOLVER_CREDIBILITY_V2.md)
+- [Architecture cible](ENGINEERING_PLATFORM_REBASELINE.md)
+- [Migration des fondations](FOUNDATION_MIGRATION_ROADMAP_V2.md)
+
+Ces documents sont des propositions d'architecture. Ils ne constituent pas une implémentation ni une certification des moteurs.
+
+---
+
 ## 1. Vue d'Ensemble & Vision Système
 
 **Mono CAD Studio** est un prototype de plateforme d'ingénierie multidisciplinaire qui vise à relier dans un même environnement :
