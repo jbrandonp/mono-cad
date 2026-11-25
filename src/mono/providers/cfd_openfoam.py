@@ -62,15 +62,18 @@ class CFDSolverConfig:
 
 @dataclass(frozen=True)
 class CFDResultReport:
-    """Rapport d'analyse aérodynamique et hydrodynamique CFD."""
+    """Rapport CFD dont l'état distingue explicitement préparation et résolution."""
 
-    drag_force_n: float            # Force de traînée Fx (N)
-    lift_force_n: float            # Force de portance Fz (N)
-    drag_coefficient_cd: float     # Coefficient de traînée sans dimension Cd
-    lift_coefficient_cl: float     # Coefficient de portance sans dimension Cl
+    drag_force_n: float | None
+    lift_force_n: float | None
+    drag_coefficient_cd: float | None
+    lift_coefficient_cl: float | None
     converged: bool
     num_iterations: int
     case_path: str
+    solver_executed: bool = False
+    status: str = "NOT_RUN"
+    message: str = ""
 
 
 class CfdOpenFoamProvider(GeometryProvider):
@@ -754,45 +757,121 @@ meshQualityControls
         path.write_text(content, encoding="utf-8")
 
     def simulate(self, output_dir: Path) -> CFDResultReport:
-        """Exécute la simulation ou calcule les estimations aérodynamiques préliminaires."""
+        """Prépare puis exécute une chaîne OpenFOAM, sans inventer de convergence ni de résultats.
+
+        Tant que l'extraction des forces et l'évaluation des résidus ne sont pas
+        implémentées, une exécution terminée est explicitement marquée
+        SOLVER_FINISHED_UNVERIFIED. Les valeurs physiques restent nulles.
+        """
         case_dir = self.generate_case_directory(output_dir)
 
-        # Calcul analytique préliminaire de référence (Résistance aérodynamique de corps immergé)
-        bmin, bmax = self._get_bounding_box()
-        frontal_area = max((bmax[1] - bmin[1]) * (bmax[2] - bmin[2]), 1e-4)  # m²
-        u_mag = math.sqrt(sum(v**2 for v in self._boundary.inlet_velocity_m_s))
-        rho = self._fluid.density_kg_m3
-        q_dyn = 0.5 * rho * (u_mag**2)
+        required_tools = ("blockMesh", "snappyHexMesh", "checkMesh", self._solver.solver_name)
+        executables = {name: shutil.which(name) for name in required_tools}
+        missing = [name for name, path in executables.items() if path is None]
+        if missing:
+            return CFDResultReport(
+                drag_force_n=None,
+                lift_force_n=None,
+                drag_coefficient_cd=None,
+                lift_coefficient_cl=None,
+                converged=False,
+                num_iterations=0,
+                case_path=str(case_dir),
+                solver_executed=False,
+                status="SOLVER_UNAVAILABLE",
+                message=(
+                    "Cas OpenFOAM généré uniquement. Solveur non exécuté; "
+                    f"exécutables manquants : {', '.join(missing)}."
+                ),
+            )
 
-        # Coefficient de traînée théorique pour corps profilé / bloc
-        aspect_ratio = (bmax[0] - bmin[0]) / max(math.sqrt(frontal_area), 1e-4)
-        cd_estimate = 0.45 if aspect_ratio < 2.0 else 0.18
-        cl_estimate = 0.05
-
-        f_drag = cd_estimate * q_dyn * frontal_area
-        f_lift = cl_estimate * q_dyn * frontal_area
-
-        # Tentative d'exécution d'OpenFOAM si le binaire 'simpleFoam' est présent dans le PATH
-        simple_foam_bin = shutil.which("simpleFoam")
-        converged = True
-        if simple_foam_bin is not None:
-            try:
-                subprocess.run(["blockMesh"], cwd=str(case_dir), check=True, capture_output=True, timeout=60)
-                subprocess.run(["simpleFoam"], cwd=str(case_dir), check=True, capture_output=True, timeout=120)
-            except Exception:
-                converged = False
-
-        report = CFDResultReport(
-            drag_force_n=float(f_drag),
-            lift_force_n=float(f_lift),
-            drag_coefficient_cd=float(cd_estimate),
-            lift_coefficient_cl=float(cl_estimate),
-            converged=converged,
-            num_iterations=self._solver.num_iterations,
-            case_path=str(case_dir),
+        commands: tuple[tuple[str, tuple[str, ...], float], ...] = (
+            ("blockMesh", (), 120.0),
+            ("snappyHexMesh", ("-overwrite",), 600.0),
+            ("checkMesh", (), 180.0),
+            (self._solver.solver_name, (), 1800.0),
         )
-        self._cached_result = report
-        return report
+        solver_executed = False
+
+        for command_name, arguments, timeout_seconds in commands:
+            if command_name == self._solver.solver_name:
+                solver_executed = True
+
+            command = [str(executables[command_name]), *arguments]
+            try:
+                process = subprocess.run(
+                    command,
+                    cwd=str(case_dir),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                )
+            except subprocess.TimeoutExpired as exc:
+                stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+                stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+                (case_dir / f"{command_name}.log").write_text(
+                    f"TIMEOUT after {timeout_seconds}s\n{stdout}\n{stderr}",
+                    encoding="utf-8",
+                )
+                return CFDResultReport(
+                    drag_force_n=None,
+                    lift_force_n=None,
+                    drag_coefficient_cd=None,
+                    lift_coefficient_cl=None,
+                    converged=False,
+                    num_iterations=0,
+                    case_path=str(case_dir),
+                    solver_executed=solver_executed,
+                    status="SOLVER_TIMEOUT",
+                    message=f"{command_name} a dépassé le délai de {timeout_seconds}s.",
+                )
+            except OSError as exc:
+                return CFDResultReport(
+                    drag_force_n=None,
+                    lift_force_n=None,
+                    drag_coefficient_cd=None,
+                    lift_coefficient_cl=None,
+                    converged=False,
+                    num_iterations=0,
+                    case_path=str(case_dir),
+                    solver_executed=solver_executed,
+                    status="EXECUTION_ERROR",
+                    message=f"Impossible de lancer {command_name}: {exc}",
+                )
+
+            log_text = f"COMMAND: {' '.join(command)}\nRETURN CODE: {process.returncode}\n\nSTDOUT\n{process.stdout}\n\nSTDERR\n{process.stderr}"
+            (case_dir / f"{command_name}.log").write_text(log_text, encoding="utf-8")
+            if process.returncode != 0:
+                return CFDResultReport(
+                    drag_force_n=None,
+                    lift_force_n=None,
+                    drag_coefficient_cd=None,
+                    lift_coefficient_cl=None,
+                    converged=False,
+                    num_iterations=0,
+                    case_path=str(case_dir),
+                    solver_executed=solver_executed,
+                    status="SOLVER_FAILED",
+                    message=f"{command_name} a échoué avec le code {process.returncode}. Consulter son journal.",
+                )
+
+        return CFDResultReport(
+            drag_force_n=None,
+            lift_force_n=None,
+            drag_coefficient_cd=None,
+            lift_coefficient_cl=None,
+            converged=False,
+            num_iterations=0,
+            case_path=str(case_dir),
+            solver_executed=True,
+            status="SOLVER_FINISHED_UNVERIFIED",
+            message=(
+                "Les exécutables OpenFOAM ont terminé sans code d'erreur. "
+                "La convergence numérique et les forces ne sont pas encore "
+                "post-traitées; aucun résultat physique n'est publié."
+            ),
+        )
 
     def tessellate_binary(
         self,
