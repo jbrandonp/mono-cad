@@ -153,7 +153,7 @@ def test_parametric_update_rolls_back_when_ecip_is_disabled(monkeypatch: pytest.
     doc.add_entity("part_rollback", original_provider)
     doc.attach_parametric_source(
         "part_rollback",
-        "RESULT_PART = bd.Box(PARAMS['width'], 10, 10)",
+        "RESULT_PART = bd.Box(PARAMS.get('width', 20.0), 10, 10)",
         ["width"],
     )
 
