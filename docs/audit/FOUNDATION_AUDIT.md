@@ -14,6 +14,7 @@ Les mentions historiques « certifié », « 100 % », « industriel », « inca
 
 ## 0 bis. Correctifs déjà introduits sur la branche de reconstruction
 - Contrats de domaine V2 initiaux ajoutés dans src/mono/domain/models.py et ports d'infrastructure dans src/mono/domain/ports.py; quantités dimensionnées et conversions explicites dans src/mono/domain/units.py; références d'artefacts, études, solveurs et transitions de crédibilité exigeant des preuves.
+- update_parameter est désormais atomique : si une reconstruction dépendante échoue, la valeur du paramètre et les providers restent inchangés.
 - L'exécution ECIP dans le processus backend est maintenant désactivée par défaut. Le flag MONO_ENABLE_UNSAFE_INPROCESS_ECIP=1 ne doit servir qu'aux tests et environnements jetables; ce mode reste non isolé.
 - Le lecteur .mono valide les noms de membres, refuse liens et types non réguliers, borne les tailles, contrôle le manifeste, les identifiants, les hashes et les tailles des artefacts, et borne les entrées compressées/gzip.
 - Tests d'intégration dépendant de CalculiX ou de l'archive démo sont explicitement ignorés lorsque ces binaires/artefacts ne sont pas présents. Cela ne signifie pas que les domaines FEA ou démo sont validés.
