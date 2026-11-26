@@ -4,6 +4,13 @@
 ### **Environnement d'Ingénierie Multidisciplinaire Unifié Piloté par Intelligence Artificielle**
 #### *De la Macromolécule Atomique ($10^{-9}\text{ m}$) à l'Architecture Bâtiment ($10^{2}\text{ m}$)*
 
+> **English summary — Mono CAD Studio (Prototype)**
+> Mono is an experimental multidisciplinary engineering environment exploring
+> CAD (B-Rep), BIM, FEA/CFD simulation, computational design and digital
+> manufacturing in a single scene. Status: prototype under active development —
+> no public demo yet; screenshots and a verified demo will be added here.
+> Licence: Apache-2.0. The detailed documentation below is in French.
+
 [![Tests](https://img.shields.io/badge/tests-106%20passed-brightgreen?style=for-the-badge&logo=pytest)](file:///tests)
 [![Coverage](https://img.shields.io/badge/coverage-83%25-green?style=for-the-badge)](file:///src/mono)
 [![Python](https://img.shields.io/badge/python-3.12-blue?style=for-the-badge&logo=python)](pyproject.toml)
