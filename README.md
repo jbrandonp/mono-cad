@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/typescript-5.9-3178C6?style=for-the-badge&logo=typescript)](frontend/src/main.ts)
 [![Architecture](https://img.shields.io/badge/architecture-100%25%20Native%20%7C%20Zero--Docker-F58025?style=for-the-badge)](file:///bin)
 [![Typing](https://img.shields.io/badge/typing-Zero--Any%20Strict-8A2BE2?style=for-the-badge)](src/mono)
-[![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-lightgrey?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-lightgrey?style=for-the-badge)](LICENSE)
 
 <br/>
 
@@ -78,7 +78,7 @@ Mono repose sur huit principes fondamentaux garantissant sa pérennité et sa ro
 4. **Réversibilité Transactionnelle Instantanée (< 5 ms) :** Toute mutation transite par le patron `Command` avec instantanés différentiels compressés sous **Zstandard** (`zstd`), permettant l'Undo/Redo sans recalcul géométrique lourd.
 5. **Double Verrou Déterministe & Multimodal :** Validation en circuit court sans IA via les portes géométriques déterministes **CADEngBench (L0-L2)**, puis inspection visuelle par juge VLM sur planche composite 4 vues cotée.
 6. **Manipulation Directe Découplée (< 50 ms) :** Les dimensions clés extraites du script paramétrique alimentent des curseurs (*sliders*) dans l'interface, recalculant la forme et re-tessellant le solide sans aucun appel au modèle de langage.
-7. **Barrière Juridique d'Isolation Anti-GPL (GPL Shield) :** Les solveurs sous licence copyleft (CalculiX GPLv2, Gmsh binaire GPLv2+, OpenFOAM GPLv3) sont strictement confinés dans des sous-processus isolés avec échange par fichiers standardisés, préservant la licence permissive libre (**Apache-2.0 / MIT**) du cœur de Mono.
+7. **Barrière Juridique d'Isolation Anti-GPL (GPL Shield) :** Les solveurs sous licence copyleft (CalculiX GPLv2, Gmsh binaire GPLv2+, OpenFOAM GPLv3) sont strictement confinés dans des sous-processus isolés avec échange par fichiers standardisés, préservant la licence permissive libre (**Apache-2.0**) du cœur de Mono.
 8. **Précision Relative-au-Centre (Rendu Multi-Échelle RTC) :** Coordonnées mondiales en double précision `float64` CPU (mètres) et coordonnées de sommets relatives `float32` GPU, éliminant tout tremblement numérique (*vertex jittering*) de l'atome ($10^{-9}\text{ m}$) au bâtiment ($10^{2}\text{ m}$).
 
 ---
@@ -420,11 +420,11 @@ curl -X POST "http://127.0.0.1:8000/api/archive/pack" \
 
 ## 9. Gouvernance des Licences & Bouclier Anti-GPL
 
-Mono est distribué sous licence permissive libre (**Apache-2.0 / MIT**). Afin d'exploiter les capacités de solveurs sous licence copyleft sans contaminer le noyau, Mono applique une **barrière d'isolation par sous-processus étanche (GPL Shield)** :
+Mono est distribué sous licence permissive libre (**Apache-2.0**). Afin d'exploiter les capacités de solveurs sous licence copyleft sans contaminer le noyau, Mono applique une **barrière d'isolation par sous-processus étanche (GPL Shield)** :
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│  Cœur Mono Permissif (Apache-2.0 / MIT)                │
+│  Cœur Mono Permissif (Apache-2.0)                │
 │  - build123d, OpenCASCADE, IfcOpenShell, Taichi, Gemmi │
 └──────────────────────────┬─────────────────────────────┘
                            │ Communication par fichiers
